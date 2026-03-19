@@ -20,7 +20,8 @@ let vendorAddress = null;
 
 const SHIPPING_RATES = {
     uk: 5,
-    intl: 20
+    intl: 20,
+    digital: 0
 };
 
 function decodeObfuscated(str, salt) {
@@ -321,6 +322,7 @@ function setupEventListeners() {
             shippingFee = parseFloat(btn.dataset.price);
             document.querySelectorAll('.shipping-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
+            updateAddressField();
             updatePrices();
         });
     });
@@ -339,6 +341,8 @@ function setupEventListeners() {
     document.querySelector('.modal-close').addEventListener('click', closeModal);
     
     document.getElementById('postal-address').addEventListener('input', updatePayButton);
+    
+    document.getElementById('email-address').addEventListener('input', updatePayButton);
     
     document.getElementById('pay-btn').addEventListener('click', processPayment);
     
@@ -396,6 +400,8 @@ function openCheckoutModal() {
     }
     
     document.getElementById('postal-address').value = '';
+    document.getElementById('email-address').value = '';
+    updateAddressField();
     updatePayButton();
     
     modal.classList.remove('hidden');
@@ -406,8 +412,28 @@ function closeModal() {
     hidePaymentStatus();
 }
 
+function updateAddressField() {
+    const postalAddress = document.getElementById('postal-address');
+    const emailAddress = document.getElementById('email-address');
+    const addressHeading = document.getElementById('address-heading');
+    const addressNote = document.getElementById('address-note');
+    
+    if (selectedShipping === 'digital') {
+        postalAddress.classList.add('hidden');
+        emailAddress.classList.remove('hidden');
+        addressHeading.textContent = '📧 Email Address';
+        addressNote.textContent = 'Your download link will be sent to this email';
+    } else {
+        postalAddress.classList.remove('hidden');
+        emailAddress.classList.add('hidden');
+        addressHeading.textContent = '📍 Postal Address';
+        addressNote.textContent = 'This will be recorded with your payment transaction';
+    }
+}
+
 function updatePayButton() {
     const postalAddress = document.getElementById('postal-address').value.trim();
+    const emailAddress = document.getElementById('email-address').value.trim();
     const payBtn = document.getElementById('pay-btn');
     const payAmount = document.getElementById('pay-amount');
     
@@ -423,6 +449,13 @@ function updatePayButton() {
     
     const totalPrice = productPrice + shippingFee;
     
+    let isAddressValid;
+    if (selectedShipping === 'digital') {
+        isAddressValid = emailAddress.includes('@') && emailAddress.length > 0;
+    } else {
+        isAddressValid = postalAddress.length >= 10;
+    }
+    
     if (mxToUsdRate > 0) {
         if (selectedPaymentMethod === 'USDT') {
             payAmount.textContent = `${totalPrice.toFixed(2)} USD = ${totalPrice.toFixed(2)} USDT`;
@@ -430,7 +463,7 @@ function updatePayButton() {
             const minimaAmount = totalPrice / mxToUsdRate * 1.10;
             payAmount.textContent = `${totalPrice.toFixed(2)} USD = ${minimaAmount.toFixed(4)} Minima`;
         }
-        payBtn.disabled = postalAddress.length < 10;
+        payBtn.disabled = !isAddressValid;
     } else {
         payAmount.textContent = '--';
         payBtn.disabled = true;

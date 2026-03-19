@@ -632,6 +632,23 @@ body {
     border-color: var(--bright-green);
 }
 
+.postal-address input[type="email"] {
+    width: 100%;
+    padding: 1rem;
+    border: 3px solid var(--brown);
+    border-radius: 12px;
+    font-family: 'Nunito', sans-serif;
+    font-size: 1rem;
+    background: var(--cream);
+    color: var(--dark);
+    box-sizing: border-box;
+}
+
+.postal-address input[type="email"]:focus {
+    outline: none;
+    border-color: var(--bright-green);
+}
+
 .address-note {
     font-size: 0.8rem;
     color: var(--brown);

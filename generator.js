@@ -101,7 +101,7 @@ function generateDappConf(product, config) {
     "version": "1.0.0",
     "headline": "${product.name}",
     "description": "${product.description}",
-    "icon": "./icon.png",
+    "icon": "./icon.svg",
     "category": "Shopping"
 }`;
 }

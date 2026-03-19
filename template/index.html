@@ -170,13 +170,19 @@
                         <span>International</span>
                         <span class="shipping-price">+$20.00</span>
                     </button>
+                    <button class="shipping-btn" data-shipping="digital" data-price="0">
+                        <span class="shipping-icon">📧</span>
+                        <span>Electronic Delivery</span>
+                        <span class="shipping-price">Free</span>
+                    </button>
                 </div>
             </div>
 
             <div class="postal-address">
-                <h3>📍 Postal Address</h3>
+                <h3 id="address-heading">📍 Postal Address</h3>
                 <textarea id="postal-address" placeholder="Enter your full postal address for delivery..." rows="4"></textarea>
-                <p class="address-note">This will be recorded with your payment transaction</p>
+                <input type="email" id="email-address" class="hidden" placeholder="Enter your email address...">
+                <p id="address-note" class="address-note">This will be recorded with your payment transaction</p>
             </div>
 
             <div id="payment-section" class="payment-section">
