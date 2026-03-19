@@ -1,9 +1,12 @@
 const MESSAGES_STORAGE_KEY = 'mishop_inbox_messages';
+const LAST_COIN_STORAGE_KEY = 'mishop_last_coin_check';
 
 let currentMessages = [];
 let selectedMessage = null;
 let myAddress = null;
 let myPublicKey = null;
+let lastCheckedCoinId = null;
+let pollingInterval = null;
 
 function textToHex(text) {
     let hex = '';
@@ -23,19 +26,35 @@ function hexToText(hex) {
 
 function decryptMessage(encryptedData) {
     return new Promise((resolve) => {
-        MDS.cmd('maxmessage action:decrypt data:' + encryptedData, (response) => {
+        if (!encryptedData) {
+            resolve(null);
+            return;
+        }
+        
+        let cleanData = encryptedData;
+        if (cleanData.startsWith('0x')) {
+            cleanData = cleanData.substring(2);
+        }
+        
+        MDS.cmd('maxmessage action:decrypt data:' + cleanData, (response) => {
             console.log('Decrypt response:', JSON.stringify(response));
             if (response.status && response.response && response.response.data) {
                 try {
-                    const hexData = response.response.data;
+                    let hexData = response.response.data;
+                    if (hexData.startsWith('0x')) {
+                        hexData = hexData.substring(2);
+                    }
                     const jsonStr = hexToText(hexData);
+                    console.log('Decrypted string:', jsonStr);
                     const data = JSON.parse(jsonStr);
                     resolve(data);
                 } catch (e) {
                     console.error('Failed to parse decrypted data:', e);
+                    console.log('Raw response data:', response.response.data);
                     resolve(null);
                 }
             } else {
+                console.log('Decrypt failed - response:', JSON.stringify(response));
                 resolve(null);
             }
         });
@@ -72,6 +91,30 @@ function loadMessages() {
     });
 }
 
+function saveLastCoinId(coinId) {
+    if (typeof MDS !== 'undefined') {
+        MDS.file.save(LAST_COIN_STORAGE_KEY, coinId);
+    } else {
+        localStorage.setItem(LAST_COIN_STORAGE_KEY, coinId);
+    }
+}
+
+function loadLastCoinId() {
+    return new Promise((resolve) => {
+        if (typeof MDS !== 'undefined') {
+            MDS.file.load(LAST_COIN_STORAGE_KEY, (response) => {
+                if (response.status && response.response) {
+                    resolve(response.response);
+                } else {
+                    resolve(null);
+                }
+            });
+        } else {
+            resolve(localStorage.getItem(LAST_COIN_STORAGE_KEY));
+        }
+    });
+}
+
 function addMessage(message) {
     const exists = currentMessages.find(m => m.ref === message.ref && m.txid === message.txid);
     if (exists) {
@@ -84,15 +127,23 @@ function addMessage(message) {
     saveMessages(currentMessages);
     renderInbox();
     
-    if (!message.read) {
-        MDS.notify('New Order: ' + message.ref);
-    }
+    MDS.notify('New Order: ' + message.ref);
+    console.log('Order added to inbox:', message.ref);
 }
 
 function processIncomingMessage(coin) {
-    if (!coin.state || !coin.state[99]) return;
+    if (!coin) {
+        console.log('No coin data provided');
+        return;
+    }
     
-    console.log('Processing incoming message...');
+    if (!coin.state || !coin.state[99]) {
+        console.log('Coin has no state[99] - not a message');
+        return;
+    }
+    
+    console.log('Processing incoming message, coin:', coin.coinid || coin.txid);
+    console.log('State[99] preview:', coin.state[99].substring(0, 50) + '...');
     
     decryptMessage(coin.state[99]).then((decrypted) => {
         if (decrypted) {
@@ -100,22 +151,23 @@ function processIncomingMessage(coin) {
             
             const message = {
                 id: Date.now().toString(),
-                ref: decrypted.ref || '',
+                ref: decrypted.ref || 'Unknown-' + Date.now(),
                 type: decrypted.type || 'ORDER',
-                product: decrypted.product || '',
+                product: decrypted.product || 'Unknown Product',
                 size: decrypted.size || '',
-                amount: decrypted.amount || '',
-                currency: decrypted.currency || '',
+                amount: decrypted.amount || '0',
+                currency: decrypted.currency || 'USDT',
                 delivery: decrypted.delivery || '',
-                shipping: decrypted.shipping || '',
+                shipping: decrypted.shipping || 'uk',
                 timestamp: decrypted.timestamp || Date.now(),
-                txid: coin.txid || coin.txnhash || '',
+                txid: coin.txid || coin.txnid || coin.coinid || '',
                 read: false
             };
             
             addMessage(message);
+            saveLastCoinId(coin.coinid);
         } else {
-            console.log('Could not decrypt message (might not be for us)');
+            console.log('Could not decrypt message (might not be for us or wrong format)');
         }
     });
 }
@@ -124,10 +176,63 @@ function getMyAddress(callback) {
     MDS.cmd('address', (response) => {
         if (response.status && response.response && response.response.address) {
             myAddress = response.response.address;
+            console.log('My address:', myAddress);
             callback(myAddress);
         } else {
+            console.error('Failed to get address');
             callback(null);
         }
+    });
+}
+
+function checkForNewCoins() {
+    if (!myAddress) {
+        console.log('No address yet, skipping coin check');
+        return;
+    }
+    
+    console.log('Checking for new coins at:', myAddress);
+    
+    MDS.cmd('balance address:' + myAddress, (response) => {
+        console.log('Balance check response:', JSON.stringify(response));
+    });
+    
+    MDS.cmd('coins unspent', (response) => {
+        if (response.status && response.response) {
+            let coins = response.response;
+            if (typeof coins === 'string') {
+                try {
+                    coins = JSON.parse(coins);
+                } catch (e) {
+                    console.log('Failed to parse coins response');
+                    return;
+                }
+            }
+            
+            if (Array.isArray(coins)) {
+                console.log('Found', coins.length, 'unspent coins');
+                
+                for (const coin of coins) {
+                    if (coin.address === myAddress && coin.state && coin.state[99]) {
+                        const exists = currentMessages.find(m => m.txid === (coin.txid || coin.coinid));
+                        if (!exists) {
+                            console.log('Found new message coin!');
+                            processIncomingMessage(coin);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function registerCoinNotify() {
+    if (!myAddress) return;
+    
+    console.log('Registering coin notify for:', myAddress);
+    
+    MDS.cmd('coinnotify action:add address:' + myAddress, (resp) => {
+        console.log('Coin notify registered:', resp);
     });
 }
 
@@ -157,11 +262,15 @@ let currentView = 'inbox';
 
 function renderInbox() {
     const inboxList = document.getElementById('inbox-list');
+    if (!inboxList) return;
+    
     const unreadCount = currentMessages.filter(m => !m.read).length;
     const totalCount = currentMessages.length;
     
-    document.getElementById('unread-count').textContent = unreadCount;
-    document.getElementById('total-count').textContent = totalCount;
+    const unreadBadge = document.getElementById('unread-count');
+    const totalBadge = document.getElementById('total-count');
+    if (unreadBadge) unreadBadge.textContent = unreadCount;
+    if (totalBadge) totalBadge.textContent = totalCount;
     
     let messages = currentMessages;
     if (currentView === 'inbox') {
@@ -174,8 +283,10 @@ function renderInbox() {
                 <div class="empty-icon">${currentView === 'inbox' ? '📭' : '✅'}</div>
                 <p>${currentView === 'inbox' ? 'No unread orders' : 'No orders yet'}</p>
                 <p class="empty-hint">Orders from your shops will appear here</p>
+                <button class="refresh-btn" id="refresh-btn">🔄 Check for Orders</button>
             </div>
         `;
+        setupRefreshButton();
         return;
     }
     
@@ -195,6 +306,20 @@ function renderInbox() {
     `).join('');
     
     setupMessageListeners();
+    setupRefreshButton();
+}
+
+function setupRefreshButton() {
+    const btn = document.getElementById('refresh-btn');
+    if (btn) {
+        btn.addEventListener('click', () => {
+            btn.textContent = 'Checking...';
+            checkForNewCoins();
+            setTimeout(() => {
+                btn.textContent = '🔄 Check for Orders';
+            }, 3000);
+        });
+    }
 }
 
 function setupMessageListeners() {
@@ -283,11 +408,17 @@ function setupEventListeners() {
         });
     });
     
-    document.querySelector('.modal-close').addEventListener('click', closeModal);
+    const modalClose = document.querySelector('.modal-close');
+    if (modalClose) {
+        modalClose.addEventListener('click', closeModal);
+    }
     
-    document.getElementById('message-modal').addEventListener('click', (e) => {
-        if (e.target.id === 'message-modal') closeModal();
-    });
+    const modal = document.getElementById('message-modal');
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target.id === 'message-modal') closeModal();
+        });
+    }
 }
 
 MDS.init(async (msg) => {
@@ -302,21 +433,46 @@ MDS.init(async (msg) => {
         getMyAddress((address) => {
             if (address) {
                 const shortAddr = address.substring(0, 10) + '...' + address.substring(address.length - 8);
-                document.getElementById('vendor-address').textContent = shortAddr;
-                document.getElementById('vendor-address').title = address;
+                const addrEl = document.getElementById('vendor-address');
+                if (addrEl) {
+                    addrEl.textContent = shortAddr;
+                    addrEl.title = address;
+                }
                 
-                MDS.cmd('coinnotify action:add address:' + address, (resp) => {
-                    console.log('Coin notify registered:', resp);
-                });
+                registerCoinNotify();
+                
+                setTimeout(() => {
+                    console.log('Initial coin check...');
+                    checkForNewCoins();
+                }, 2000);
+                
+                if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                }
+                pollingInterval = setInterval(() => {
+                    checkForNewCoins();
+                }, 30000);
             }
         });
         
         setupEventListeners();
         
     } else if (msg.event === 'NOTIFYCOIN') {
-        console.log('NOTIFYCOIN event:', JSON.stringify(msg.data));
-        if (msg.data && msg.data.address === myAddress) {
-            processIncomingMessage(msg.data.coin);
+        console.log('NOTIFYCOIN event received!:', JSON.stringify(msg.data));
+        if (msg.data && msg.data.coin) {
+            const coin = msg.data.coin;
+            if (coin.address === myAddress) {
+                console.log('Coin is for us, processing...');
+                processIncomingMessage(coin);
+            } else {
+                console.log('Coin address mismatch:', coin.address, 'vs', myAddress);
+            }
         }
+    } else if (msg.event === 'NEWBLOCK') {
+        console.log('New block - checking for coins...');
+        checkForNewCoins();
+    } else if (msg.event === 'MDS_TIMER_10SECONDS') {
+        console.log('10 second timer - checking for coins...');
+        checkForNewCoins();
     }
 });
