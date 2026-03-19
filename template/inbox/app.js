@@ -203,7 +203,7 @@ function processIncomingMessage(coin) {
                 txid: coin.txid || coin.txnid || coin.coinid || '',
                 read: false,
                 buyerPublicKey: decrypted.buyerPublicKey || decrypted._senderPublicKey || '',
-                buyerAddress: decrypted.buyerAddress || ''
+                buyerAddress: decrypted.buyerAddress || decrypted._senderPublicKey || ''
             };
             
             addMessage(message);

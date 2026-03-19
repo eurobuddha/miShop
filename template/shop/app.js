@@ -163,6 +163,12 @@ function loadMessages() {
 }
 
 function addMessage(message) {
+    const exists = currentMessages.find(m => m.ref === message.ref && m.txid === message.txid);
+    if (exists) {
+        console.log('Message already exists:', message.ref, message.txid);
+        return;
+    }
+    
     currentMessages.unshift(message);
     saveMessages(currentMessages);
     renderInbox();
@@ -180,7 +186,7 @@ async function encryptMessage(publicKey, data) {
             console.log('Encrypt response:', JSON.stringify(response));
             if (response.status && response.response && response.response.message && response.response.message.data) {
                 resolve({
-                    encrypted: response.response.data,
+                    encrypted: response.response.message.data,
                     buyerPublicKey: response.response.message.mxpublickey || '',
                     buyerAddress: response.response.message.miniaddress || ''
                 });
@@ -239,12 +245,15 @@ async function sendEncryptedOrder(orderDetails, callback) {
 
 function getMyPublicKey() {
     return new Promise((resolve) => {
-        MDS.cmd('maxmessage action:publickey', (response) => {
-            console.log('getMyPublicKey response:', JSON.stringify(response));
-            if (response.status && response.response && response.response.publickey) {
-                resolve(response.response.publickey);
-            } else if (response.status && response.response && response.response.message && response.response.message.publickey) {
-                resolve(response.response.message.publickey);
+        const dummyData = JSON.stringify({type: 'KEY_REQUEST', timestamp: Date.now()});
+        const hexData = textToHex(dummyData);
+        const vendorPk = vendorPublicKey || 'MxG18HGG6FJ038614Y8CW46US6G20810K0070CD00Z83282G60G19TUFFWSB6EEF0619DH9A069ECNU1TNEFRBHKTE8DU5T9740QUW30BH9F45YSZUM5SSVUHU36WFGSWDZS6CZYGB4AJG83VQPUF42R6S11Z9R70MUQCJRG202YQK7Z4FS904R7V4W8ZBHK7D5STVHK1GYSV54HJSBRE1MUTHNHCCGV9BUWE2FZBEND91D421Z6V2Z7BRGMTECVC10608006P3DB2S';
+        MDS.cmd('maxmessage action:encrypt publickey:' + vendorPk + ' data:' + hexData, (response) => {
+            console.log('getMyPublicKey via encrypt response:', JSON.stringify(response));
+            if (response.status && response.response && response.response.message && response.response.message.mxpublickey) {
+                resolve(response.response.message.mxpublickey);
+            } else if (response.status && response.response && response.response.mxpublickey) {
+                resolve(response.response.mxpublickey);
             } else {
                 resolve(null);
             }
@@ -929,110 +938,120 @@ async function processPayment() {
             buyerAddress: ''
         };
         
-        showPaymentStatus('Encrypting order with buyer info...', 'pending');
-        console.log('=== SENDING ORDER ===');
+        showPaymentStatus('Getting buyer info...', 'pending');
+        console.log('=== SENDING ORDER (Single TX) ===');
         
-        sendEncryptedOrder(messagePayload, async (msgSuccess, msgResponse) => {
+        const orderPayload = {
+            ref: lastOrderReference,
+            product: PRODUCT.name,
+            size: sizeLabel,
+            amount: totalPrice.toFixed(2),
+            currency: tokenName,
+            delivery: deliveryInfo,
+            shipping: selectedShipping,
+            timestamp: Date.now(),
+            buyerPublicKey: '',
+            buyerAddress: ''
+        };
+        
+        try {
+            const buyerInfo = await encryptMessage(vendorPublicKey, orderPayload);
             
-            if (!msgSuccess) {
-                showPaymentStatus('Failed to send order: ' + msgResponse, 'error');
-                payBtn.disabled = false;
-                payBtn.querySelector('.btn-text').textContent = '💸 Pay Now';
-                return;
+            if (!buyerInfo || !buyerInfo.encrypted) {
+                throw new Error('Failed to encrypt message');
             }
             
-            console.log('Encrypted order sent:', JSON.stringify(msgResponse));
-            console.log('Buyer info in response:', {
-                publicKey: msgResponse?.buyerPublicKey,
-                address: msgResponse?.buyerAddress
+            const fullPayload = {
+                ...orderPayload,
+                buyerPublicKey: buyerPublicKey || buyerInfo.buyerPublicKey || '',
+                buyerAddress: buyerAddress || ''
+            };
+            
+            console.log('Buyer info obtained:', {
+                publicKey: buyerInfo.buyerPublicKey,
+                address: buyerInfo.buyerAddress
             });
             
-            if (msgResponse?.buyerPublicKey && msgResponse?.buyerAddress) {
-                console.log('Got buyer info, sending updated order with reply address...');
-                
-                const fullPayload = {
-                    ...messagePayload,
-                    buyerPublicKey: msgResponse.buyerPublicKey,
-                    buyerAddress: msgResponse.buyerAddress
-                };
-                
-                showPaymentStatus('Sending order with reply address...', 'pending');
-                
-                sendEncryptedOrder(fullPayload, async (updateSuccess, updateResponse) => {
-                    if (!updateSuccess) {
-                        showPaymentStatus('Failed to send reply address: ' + updateResponse, 'error');
-                        payBtn.disabled = false;
-                        payBtn.querySelector('.btn-text').textContent = '💸 Pay Now';
-                        return;
-                    }
-                    
-                    proceedWithPayment(updateResponse?.txid || 'confirmed', updateResponse);
-                });
-            } else {
-                console.log('No buyer info available, proceeding without reply address');
-                proceedWithPayment(msgResponse?.txid || 'confirmed', msgResponse);
+            showPaymentStatus('Sending encrypted order...', 'pending');
+            
+            const encryptedFinal = await encryptMessage(vendorPublicKey, fullPayload);
+            
+            if (!encryptedFinal || !encryptedFinal.encrypted) {
+                throw new Error('Failed to encrypt full message');
             }
             
-            function proceedWithPayment(orderTxid, buyerInfoResponse) {
-                const storedBuyerInfo = buyerInfoResponse || msgResponse || {};
-                addMessage({
-                    id: Date.now().toString(),
-                    ref: lastOrderReference,
-                    type: 'ORDER',
-                    product: PRODUCT.name,
-                    size: sizeLabel,
-                    amount: totalPrice.toFixed(2),
-                    currency: tokenName,
-                    delivery: deliveryInfo,
-                    shipping: selectedShipping,
-                    timestamp: Date.now(),
-                    txid: orderTxid,
-                    read: true,
-                    direction: 'sent',
-                    buyerPublicKey: storedBuyerInfo?.buyerPublicKey || '',
-                    buyerAddress: storedBuyerInfo?.buyerAddress || ''
-                });
-                
-                showPaymentStatus('Sending payment...', 'pending');
-                
-                let command;
-                if (selectedPaymentMethod === 'USDT') {
-                    command = `send address:${vendorAddress} amount:${sendAmount.toFixed(8)} tokenid:${TOKEN_IDS.USDT}`;
-                } else {
-                    command = `send address:${vendorAddress} amount:${sendAmount.toFixed(8)} tokenid:${TOKEN_IDS.MINIMA}`;
-                }
-                
-                console.log('Payment command:', command);
-                
+            const state = {};
+            state[99] = encryptedFinal.encrypted;
+            
+            const command = 'send address:' + vendorAddress + ' amount:0.0001 tokenid:' + TOKEN_IDS.MINIMA + ' state:' + JSON.stringify(state);
+            
+            await new Promise((resolve, reject) => {
                 MDS.cmd(command, (response) => {
-                    console.log('MDS Payment Response:', JSON.stringify(response));
-                    
+                    console.log('Order TX Response:', JSON.stringify(response));
                     if (response && response.status) {
-                        const txid = response.response?.txnid || response.response?.tx?.pow || 'confirmed';
-                        payBtn.querySelector('.btn-text').textContent = '✓ Sent!';
-                        payBtn.classList.add('sent');
-                        showPaymentStatus('Transaction sent! TX: ' + txid.substring(0, 20) + '...', 'success');
+                        const orderTxid = response.response?.txnid || 'confirmed';
+                        console.log('Order sent with txid:', orderTxid);
                         
-                        setTimeout(() => {
-                            closeModal();
-                            showConfirmation(txid, lastOrderReference);
-                        }, 3000);
+                        addMessage({
+                            id: Date.now().toString(),
+                            ref: lastOrderReference,
+                            type: 'ORDER',
+                            product: PRODUCT.name,
+                            size: sizeLabel,
+                            amount: totalPrice.toFixed(2),
+                            currency: tokenName,
+                            delivery: deliveryInfo,
+                            shipping: selectedShipping,
+                            timestamp: Date.now(),
+                            txid: orderTxid,
+                            read: true,
+                            direction: 'sent',
+                            buyerPublicKey: buyerPublicKey || buyerInfo.buyerPublicKey || '',
+                            buyerAddress: buyerAddress || ''
+                        });
+                        
+                        showPaymentStatus('Sending payment...', 'pending');
+                        
+                        let payCommand;
+                        if (selectedPaymentMethod === 'USDT') {
+                            payCommand = 'send address:' + vendorAddress + ' amount:' + sendAmount.toFixed(8) + ' tokenid:' + TOKEN_IDS.USDT;
+                        } else {
+                            payCommand = 'send address:' + vendorAddress + ' amount:' + sendAmount.toFixed(8) + ' tokenid:' + TOKEN_IDS.MINIMA;
+                        }
+                        
+                        console.log('Payment command:', payCommand);
+                        
+                        MDS.cmd(payCommand, (payResponse) => {
+                            console.log('MDS Payment Response:', JSON.stringify(payResponse));
+                            
+                            if (payResponse && payResponse.status) {
+                                const txid = payResponse.response?.txnid || payResponse.response?.tx?.pow || 'confirmed';
+                                payBtn.querySelector('.btn-text').textContent = '✓ Sent!';
+                                payBtn.classList.add('sent');
+                                showPaymentStatus('Transaction sent! TX: ' + txid.substring(0, 20) + '...', 'success');
+                                
+                                setTimeout(() => {
+                                    closeModal();
+                                    showConfirmation(txid, lastOrderReference);
+                                }, 3000);
+                            } else {
+                                const errorMsg = payResponse?.error || 'Payment may have failed';
+                                showPaymentStatus(errorMsg + ' (but order was encrypted and sent)', 'error');
+                                payBtn.disabled = false;
+                                payBtn.querySelector('.btn-text').textContent = '💸 Pay Now';
+                            }
+                            resolve();
+                        });
                     } else {
-                        const errorMsg = response?.error || 'Payment may have failed';
-                        showPaymentStatus(errorMsg + ' (but order was encrypted and sent)', 'error');
-                        payBtn.disabled = false;
-                        payBtn.querySelector('.btn-text').textContent = '💸 Pay Now';
+                        reject(new Error(response?.error || 'Order TX failed'));
                     }
                 });
-            }
-        });
-        
-        setTimeout(() => {
-            if (document.getElementById('pay-btn').querySelector('.btn-text').textContent.includes('Sending')) {
-                document.getElementById('pay-btn').querySelector('.btn-text').textContent = 'Sent! (confirming...)';
-                showPaymentStatus('Transaction sent! Confirming...', 'success');
-            }
-        }, 10000);
+            });
+        } catch (error) {
+            showPaymentStatus('Failed to send order: ' + error.message, 'error');
+            payBtn.disabled = false;
+            payBtn.querySelector('.btn-text').textContent = '💸 Pay Now';
+        }
         
     } catch (error) {
         payBtn.disabled = false;
@@ -1633,8 +1652,16 @@ MDS.init(async (msg) => {
         
         getMyAddress(addr => {
             if (addr) {
+                buyerAddress = addr;
                 buyerInboxAddress = addr;
                 console.log('Buyer inbox address:', buyerInboxAddress);
+                
+                getMyPublicKey().then(pk => {
+                    if (pk) {
+                        buyerPublicKey = pk;
+                        console.log('Buyer public key set:', buyerPublicKey);
+                    }
+                });
                 
                 if (typeof MDS !== 'undefined') {
                     MDS.cmd('coinnotify action:add address:' + buyerInboxAddress, function(resp) {
