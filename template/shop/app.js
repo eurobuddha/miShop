@@ -5,6 +5,7 @@ const TOKEN_IDS = {
 
 const PRICE_STORAGE_KEY = 'minima_last_price';
 const MESSAGES_STORAGE_KEY = 'mishop_messages';
+const BUYER_ADDRESS_STORAGE_KEY = 'mishop_buyer_address';
 const DEFAULT_MINIMA_PRICE = 0.004;
 
 const OBFUSCATED_CMC_KEY = '';
@@ -57,6 +58,7 @@ function generateOrderReference(productName) {
 function getDecodedPublicKey() {
     const key = VENDOR_CONFIG.vendorPublicKey;
     if (key && key.startsWith && key.startsWith('Mx')) {
+        console.log('Using vendorPublicKey for encryption:', key.substring(0, 20) + '...');
         return key;
     }
     return null;
@@ -81,38 +83,39 @@ function hexToText(hex) {
 function decryptMessage(encryptedData) {
     return new Promise((resolve) => {
         let cleanData = encryptedData;
-        if (cleanData.startsWith('0x')) {
+        if (cleanData && cleanData.startsWith('0x')) {
             cleanData = cleanData.substring(2);
         }
-        
+
         MDS.cmd('maxmessage action:decrypt data:' + cleanData, (response) => {
             console.log('Decrypt response:', JSON.stringify(response));
-            if (response.status && response.response && response.response.message && response.response.message.data) {
+
+            if (response && response.status) {
                 try {
-                    let hexData = response.response.message.data;
-                    if (hexData.startsWith('0x')) {
-                        hexData = hexData.substring(2);
+                    let hexData = response.response?.message?.data || response.response?.data;
+                    if (hexData) {
+                        if (hexData.startsWith('0x')) {
+                            hexData = hexData.substring(2);
+                        }
+                        const jsonStr = hexToText(hexData);
+                        const data = JSON.parse(jsonStr);
+                        data._senderPublicKey = response.response?.message?.mxpublickey || response.response?.mxpublickey || null;
+                        resolve(data);
+                        return;
                     }
-                    const jsonStr = hexToText(hexData);
-                    const data = JSON.parse(jsonStr);
-                    data._senderPublicKey = response.response.message?.mxpublickey || null;
-                    resolve(data);
                 } catch (e) {
                     console.error('Failed to parse decrypted data:', e);
-                    resolve(null);
                 }
-            } else if (response.status === false && response.error) {
-                console.log('Decryption failed, trying plain JSON parse...');
-                try {
-                    const jsonStr = hexToText(cleanData);
-                    const data = JSON.parse(jsonStr);
-                    console.log('Parsed as plain JSON:', data);
-                    resolve(data);
-                } catch (e) {
-                    console.log('Not valid JSON either');
-                    resolve(null);
-                }
-            } else {
+            }
+
+            console.log('Decryption fallback triggered, attempting direct parse');
+            try {
+                const jsonStr = hexToText(cleanData);
+                const data = JSON.parse(jsonStr);
+                console.log('Parsed as plain JSON:', data);
+                resolve(data);
+            } catch (e) {
+                console.log('Fallback parse failed');
                 resolve(null);
             }
         });
@@ -192,18 +195,29 @@ async function encryptMessage(publicKey, data) {
     return new Promise((resolve) => {
         const jsonStr = JSON.stringify(data);
         const hexData = textToHex(jsonStr);
-        
+
         MDS.cmd('maxmessage action:encrypt publickey:' + publicKey + ' data:' + hexData, (response) => {
             console.log('Encrypt response:', JSON.stringify(response));
-            if (response.status && response.response && response.response.message && response.response.message.data) {
-                resolve({
-                    encrypted: response.response.message.data,
-                    buyerPublicKey: response.response.message.mxpublickey || '',
-                    buyerAddress: response.response.message.miniaddress || ''
-                });
-            } else {
+
+            if (!response || !response.status) {
                 resolve(null);
+                return;
             }
+
+            const message = response.response?.message || {};
+            const encrypted = response.response?.data || message.data;
+
+            if (!encrypted) {
+                resolve(null);
+                return;
+            }
+
+            resolve({
+                encrypted,
+                buyerPublicKey: message.mxpublickey || response.response?.mxpublickey || '',
+                buyerAddress: message.miniaddress || response.response?.miniaddress || '',
+                senderPublicKey: message.mxpublickey || response.response?.mxpublickey || ''
+            });
         });
     });
 }
@@ -256,18 +270,33 @@ async function sendEncryptedOrder(orderDetails, callback) {
 
 function getMyPublicKey() {
     return new Promise((resolve) => {
-        const dummyData = JSON.stringify({type: 'KEY_REQUEST', timestamp: Date.now()});
-        const hexData = textToHex(dummyData);
-        const vendorPk = vendorPublicKey || 'MxG18HGG6FJ038614Y8CW46US6G20810K0070CD00Z83282G60G19TUFFWSB6EEF0619DH9A069ECNU1TNEFRBHKTE8DU5T9740QUW30BH9F45YSZUM5SSVUHU36WFGSWDZS6CZYGB4AJG83VQPUF42R6S11Z9R70MUQCJRG202YQK7Z4FS904R7V4W8ZBHK7D5STVHK1GYSV54HJSBRE1MUTHNHCCGV9BUWE2FZBEND91D421Z6V2Z7BRGMTECVC10608006P3DB2S';
-        MDS.cmd('maxmessage action:encrypt publickey:' + vendorPk + ' data:' + hexData, (response) => {
-            console.log('getMyPublicKey via encrypt response:', JSON.stringify(response));
-            if (response.status && response.response && response.response.message && response.response.message.mxpublickey) {
-                resolve(response.response.message.mxpublickey);
-            } else if (response.status && response.response && response.response.mxpublickey) {
-                resolve(response.response.mxpublickey);
-            } else {
-                resolve(null);
+        MDS.cmd('maxmessage action:publickey', (response) => {
+            console.log('getMyPublicKey response:', JSON.stringify(response));
+            if (response.status && response.response && response.response.publickey) {
+                resolve(response.response.publickey);
+                return;
             }
+            if (response.status && response.response && response.response.message && response.response.message.publickey) {
+                resolve(response.response.message.publickey);
+                return;
+            }
+
+            if (!vendorPublicKey) {
+                resolve(null);
+                return;
+            }
+
+            const dummyData = textToHex(JSON.stringify({type: 'KEY_REQUEST', timestamp: Date.now()}));
+            MDS.cmd('maxmessage action:encrypt publickey:' + vendorPublicKey + ' data:' + dummyData, (fallbackResponse) => {
+                console.log('getMyPublicKey fallback response:', JSON.stringify(fallbackResponse));
+                if (fallbackResponse.status && fallbackResponse.response && fallbackResponse.response.message && fallbackResponse.response.message.mxpublickey) {
+                    resolve(fallbackResponse.response.message.mxpublickey);
+                } else if (fallbackResponse.status && fallbackResponse.response && fallbackResponse.response.mxpublickey) {
+                    resolve(fallbackResponse.response.mxpublickey);
+                } else {
+                    resolve(null);
+                }
+            });
         });
     });
 }
@@ -277,13 +306,65 @@ function getMyAddress(callback) {
         console.log('getaddress response:', JSON.stringify(response));
         if (response.status && response.response) {
             const address = response.response.address || response.response.miniaddress || response.response;
-            if (address && address.startsWith('0x') || address && address.startsWith('Mx')) {
+            if (address && (address.startsWith('0x') || address.startsWith('Mx'))) {
                 callback(address);
                 return;
             }
         }
         callback(null);
     });
+}
+
+function saveBuyerAddress(address) {
+    if (!address) return;
+    if (typeof MDS !== 'undefined') {
+        MDS.file.save(BUYER_ADDRESS_STORAGE_KEY, address);
+    } else {
+        localStorage.setItem(BUYER_ADDRESS_STORAGE_KEY, address);
+    }
+}
+
+function loadBuyerAddress() {
+    return new Promise((resolve) => {
+        if (typeof MDS !== 'undefined') {
+            MDS.file.load(BUYER_ADDRESS_STORAGE_KEY, (response) => {
+                if (response.status && response.response) {
+                    const address = String(response.response).trim();
+                    if (address && (address.startsWith('0x') || address.startsWith('Mx'))) {
+                        resolve(address);
+                        return;
+                    }
+                }
+                resolve(null);
+            });
+        } else {
+            const address = localStorage.getItem(BUYER_ADDRESS_STORAGE_KEY);
+            if (address && (address.startsWith('0x') || address.startsWith('Mx'))) {
+                resolve(address);
+                return;
+            }
+            resolve(null);
+        }
+    });
+}
+
+function getFreshBuyerAddress() {
+    return new Promise((resolve) => {
+        getMyAddress((address) => {
+            if (address) {
+                saveBuyerAddress(address);
+            }
+            resolve(address || null);
+        });
+    });
+}
+
+async function getOrCreateBuyerAddress() {
+    const savedAddress = await loadBuyerAddress();
+    if (savedAddress) {
+        return savedAddress;
+    }
+    return getFreshBuyerAddress();
 }
 
 function processIncomingMessage(coin) {
@@ -342,7 +423,7 @@ function processReplyMessage(coin) {
                 product: decrypted.originalOrder || '',
                 message: decrypted.message || '',
                 timestamp: decrypted.timestamp || Date.now(),
-                txid: coin.txid || '',
+                txid: coin.txid || coin.txnid || coin.coinid || '',
                 read: false,
                 direction: 'received',
                 vendorPublicKey: decrypted.vendorPublicKey || decrypted._senderPublicKey || null,
@@ -494,21 +575,33 @@ function updatePrices() {
     
     console.log('updatePrices called - mode:', PRODUCT.mode, 'quantity/size:', isUnitsMode ? selectedQuantity : selectedSize, 'price:', productPrice);
     
-    document.getElementById('price-usd-value').textContent = `$${productPrice.toFixed(2)} USDT`;
-    document.querySelector('.buy-button .btn-price').textContent = `$${productPrice.toFixed(2)} USDT`;
+    const priceUsdEl = document.getElementById('price-usd-value');
+    if (priceUsdEl) {
+        priceUsdEl.textContent = `$${productPrice.toFixed(2)} USDT`;
+    }
+
+    const buyBtnPriceEl = document.querySelector('.buy-button .btn-price');
+    if (buyBtnPriceEl) {
+        buyBtnPriceEl.textContent = `$${productPrice.toFixed(2)} USDT`;
+    }
     
     console.log('mxToUsdRate:', mxToUsdRate);
     
+    const minimaPriceEl = document.getElementById('price-minima');
     if (mxToUsdRate > 0 && mxToUsdRate !== 1) {
         const minimaAmount = productPrice / mxToUsdRate;
-        document.getElementById('price-minima').textContent = `${minimaAmount.toFixed(4)} Minima`;
+        if (minimaPriceEl) {
+            minimaPriceEl.textContent = `${minimaAmount.toFixed(4)} Minima`;
+        }
         console.log('Price displayed:', minimaAmount, 'MINI');
     } else {
-        document.getElementById('price-minima').textContent = `Loading...`;
+        if (minimaPriceEl) {
+            minimaPriceEl.textContent = 'Loading...';
+        }
     }
     
     const modal = document.getElementById('modal');
-    if (!modal.classList.contains('hidden')) {
+    if (modal && !modal.classList.contains('hidden')) {
         updatePayButton();
     }
 }
@@ -921,6 +1014,18 @@ async function processPayment() {
             payBtn.querySelector('.btn-text').textContent = '💸 Pay Now';
             return;
         }
+
+        if (!buyerAddress) {
+            buyerAddress = await getOrCreateBuyerAddress();
+            buyerInboxAddress = buyerAddress;
+        }
+
+        if (!buyerAddress) {
+            showPaymentStatus('Error: Could not get buyer address', 'error');
+            payBtn.disabled = false;
+            payBtn.querySelector('.btn-text').textContent = '💸 Pay Now';
+            return;
+        }
         
         if (!buyerPublicKey) {
             showPaymentStatus('Getting buyer info...', 'pending');
@@ -987,8 +1092,8 @@ async function processPayment() {
             
             const fullPayload = {
                 ...orderPayload,
-                buyerPublicKey: buyerPublicKey || '',
-                buyerAddress: buyerAddress || ''
+                buyerPublicKey: buyerPublicKey || buyerInfo.buyerPublicKey || '',
+                buyerAddress: buyerAddress || buyerInfo.buyerAddress || buyerInboxAddress || ''
             };
             
             console.log('Buyer info obtained:', {
@@ -1006,6 +1111,7 @@ async function processPayment() {
             
             const state = {};
             state[99] = encryptedFinal.encrypted;
+            console.log('Encrypted state length:', String(encryptedFinal.encrypted || '').length);
             
             const command = 'send address:' + vendorAddress + ' amount:0.0001 tokenid:' + TOKEN_IDS.MINIMA + ' state:' + JSON.stringify(state);
             
@@ -1031,7 +1137,7 @@ async function processPayment() {
                             read: true,
                             direction: 'sent',
                             buyerPublicKey: buyerPublicKey || buyerInfo.buyerPublicKey || '',
-                            buyerAddress: buyerAddress || ''
+                            buyerAddress: buyerAddress || buyerInfo.buyerAddress || buyerInboxAddress || ''
                         });
                         
                         showPaymentStatus('Sending payment...', 'pending');
@@ -1453,14 +1559,15 @@ async function sendBuyerReply() {
         
         const encrypted = await encryptMessage(msg.vendorPublicKey, replyPayload);
         
-        if (!encrypted) {
+        if (!encrypted || !encrypted.encrypted) {
             throw new Error('Encryption failed');
         }
         
         statusEl.textContent = 'Sending encrypted reply...';
         
         const state = {};
-        state[99] = encrypted;
+        state[99] = encrypted.encrypted;
+        console.log('Buyer reply encrypted length:', String(encrypted.encrypted).length);
         
         const sendAddress = msg.vendorAddress || buyerInboxAddress;
         
@@ -1674,28 +1781,24 @@ MDS.init(async (msg) => {
         renderShop();
         initApp();
         
-        getMyAddress(addr => {
-            if (addr) {
-                buyerAddress = addr;
-                buyerInboxAddress = addr;
-                console.log('Buyer inbox address:', buyerInboxAddress);
-                
-                getMyPublicKey().then(pk => {
-                    if (pk) {
-                        buyerPublicKey = pk;
-                        console.log('Buyer public key set:', buyerPublicKey);
-                    }
-                });
-                
-                if (typeof MDS !== 'undefined') {
-                    MDS.cmd('coinnotify action:add address:' + buyerInboxAddress, function(resp) {
-                        console.log('Coin notify registered for buyer inbox:', resp);
-                    });
-                }
-                
-                startReplyPolling();
+        buyerAddress = await getOrCreateBuyerAddress();
+        buyerInboxAddress = buyerAddress;
+        if (buyerInboxAddress) {
+            console.log('Buyer inbox address:', buyerInboxAddress);
+
+            buyerPublicKey = await getMyPublicKey();
+            if (buyerPublicKey) {
+                console.log('Buyer public key set:', buyerPublicKey);
             }
-        });
+
+            if (typeof MDS !== 'undefined') {
+                MDS.cmd('coinnotify action:add address:' + buyerInboxAddress, function(resp) {
+                    console.log('Coin notify registered for buyer inbox:', resp);
+                });
+            }
+
+            startReplyPolling();
+        }
         
         const loadingIndicator = document.getElementById('loading-indicator');
         if (loadingIndicator) loadingIndicator.classList.remove('hidden');

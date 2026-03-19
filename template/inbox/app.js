@@ -52,34 +52,50 @@ function decryptMessage(encryptedData) {
         
         MDS.cmd('maxmessage action:decrypt data:' + cleanData, (response) => {
             console.log('Decrypt response:', JSON.stringify(response));
-            if (response.status && response.response && response.response.message && response.response.message.data) {
+            if (response && response.status) {
                 try {
-                    let hexData = response.response.message.data;
-                    if (hexData.startsWith('0x')) {
-                        hexData = hexData.substring(2);
-                    }
-                    
-                    let jsonStr = hexToText(hexData);
-                    console.log('Decrypted string (hex):', jsonStr);
-                    
-                    if (jsonStr.startsWith('%')) {
-                        try {
-                            jsonStr = decodeURIComponent(jsonStr);
-                            console.log('URL decoded string:', jsonStr);
-                        } catch (e) {
-                            console.log('URL decode failed, trying as-is');
+                    let hexData = response.response?.message?.data || response.response?.data;
+                    if (hexData) {
+                        if (hexData.startsWith('0x')) {
+                            hexData = hexData.substring(2);
                         }
+
+                        let jsonStr = hexToText(hexData);
+                        console.log('Decrypted string (hex):', jsonStr);
+
+                        if (jsonStr.startsWith('%')) {
+                            try {
+                                jsonStr = decodeURIComponent(jsonStr);
+                                console.log('URL decoded string:', jsonStr);
+                            } catch (e) {
+                                console.log('URL decode failed, trying as-is');
+                            }
+                        }
+
+                        const data = JSON.parse(jsonStr);
+                        data._senderPublicKey = response.response?.message?.mxpublickey || response.response?.mxpublickey || null;
+                        resolve(data);
+                        return;
                     }
-                    
-                    const data = JSON.parse(jsonStr);
-                    data._senderPublicKey = response.response.message?.mxpublickey || null;
-                    resolve(data);
                 } catch (e) {
                     console.error('Failed to parse decrypted data:', e);
-                    resolve(null);
                 }
-            } else {
-                console.log('Decrypt failed - response:', JSON.stringify(response));
+            }
+
+            console.log('Decrypt fallback - attempting direct parse');
+            try {
+                let jsonStr = hexToText(cleanData);
+                if (jsonStr.startsWith('%')) {
+                    try {
+                        jsonStr = decodeURIComponent(jsonStr);
+                    } catch (e) {
+                        console.log('Fallback decodeURIComponent failed');
+                    }
+                }
+                const data = JSON.parse(jsonStr);
+                resolve(data);
+            } catch (e) {
+                console.log('Fallback parse failed');
                 resolve(null);
             }
         });
@@ -93,14 +109,24 @@ function encryptMessage(publicKey, data) {
         
         MDS.cmd('maxmessage action:encrypt publickey:' + publicKey + ' data:' + hexData, (response) => {
             console.log('Encrypt response:', JSON.stringify(response));
-            if (response.status && response.response && response.response.message && response.response.message.data) {
-                resolve({
-                    encrypted: response.response.message.data,
-                    senderPublicKey: response.response.message?.mxpublickey || null
-                });
-            } else {
+            if (!response || !response.status) {
                 resolve(null);
+                return;
             }
+
+            const message = response.response?.message || {};
+            const encrypted = response.response?.data || message.data;
+
+            if (!encrypted) {
+                resolve(null);
+                return;
+            }
+
+            resolve({
+                encrypted,
+                senderPublicKey: message.mxpublickey || response.response?.mxpublickey || null,
+                senderAddress: message.miniaddress || response.response?.miniaddress || null
+            });
         });
     });
 }
@@ -120,32 +146,43 @@ function loadMessages() {
             MDS.file.load(MESSAGES_STORAGE_KEY, (response) => {
                 if (response.status && response.response) {
                     try {
-                        resolve(JSON.parse(response.response));
+                        const msgs = JSON.parse(response.response);
+                        console.log('LOAD MESSAGES: From MDS storage, loaded', msgs.length, 'messages');
+                        resolve(msgs);
                     } catch (e) {
+                        console.log('LOAD MESSAGES: Parse error, returning empty');
                         resolve([]);
                     }
                 } else {
+                    console.log('LOAD MESSAGES: No data in MDS storage');
                     resolve([]);
                 }
             });
         } else {
             const data = localStorage.getItem(MESSAGES_STORAGE_KEY);
-            resolve(data ? JSON.parse(data) : []);
+            const msgs = data ? JSON.parse(data) : [];
+            console.log('LOAD MESSAGES: From localStorage, loaded', msgs.length, 'messages');
+            resolve(msgs);
         }
     });
 }
 
 function addMessage(message) {
+    console.log('ADD MESSAGE CALLED with:', { ref: message.ref, txid: message.txid });
     const exists = currentMessages.find(m => m.ref === message.ref && m.txid === message.txid);
     if (exists) {
-        console.log('Message already exists:', message.ref);
+        console.log('Message already exists:', message.ref, 'txid:', message.txid);
         return;
     }
     
+    console.log('ADD MESSAGE: Adding', message.ref, 'txid:', message.txid, 'to currentMessages. Before:', currentMessages.length);
     currentMessages.unshift(message);
     currentMessages.sort((a, b) => b.timestamp - a.timestamp);
     saveMessages(currentMessages);
+    console.log('ADD MESSAGE: After adding', message.ref, 'currentMessages has', currentMessages.length, 'messages');
+    console.log('ADD MESSAGE: Calling renderInbox...');
     renderInbox();
+    console.log('ADD MESSAGE: renderInbox completed');
     
     MDS.notify('New Order: ' + message.ref);
     console.log('Order added to inbox:', message.ref);
@@ -203,7 +240,7 @@ function processIncomingMessage(coin) {
                 txid: coin.txid || coin.txnid || coin.coinid || '',
                 read: false,
                 buyerPublicKey: decrypted.buyerPublicKey || decrypted._senderPublicKey || '',
-                buyerAddress: decrypted.buyerAddress || decrypted._senderPublicKey || ''
+                buyerAddress: decrypted.buyerAddress || ''
             };
             
             addMessage(message);
@@ -231,6 +268,8 @@ function checkForNewCoins() {
     
     console.log('=== CHECKING FOR COINS ===');
     console.log('Looking at address:', myAddress);
+    console.log('Current messages in memory:', currentMessages.length);
+    currentMessages.forEach(m => console.log('  - ref:', m.ref, 'txid:', (m.txid || '').substring(0, 30)));
     
     const cmd = 'coins address:' + myAddress;
     console.log('Command:', cmd);
@@ -328,10 +367,20 @@ let currentView = 'inbox';
 
 function renderInbox() {
     const inboxList = document.getElementById('inbox-list');
-    if (!inboxList) return;
+    if (!inboxList) {
+        console.log('RENDER: inboxList element not found');
+        return;
+    }
     
     const unreadCount = currentMessages.filter(m => !m.read).length;
     const totalCount = currentMessages.length;
+    
+    console.log('RENDER DEBUG:', {
+        currentMessagesCount: currentMessages.length,
+        unreadCount,
+        totalCount,
+        currentView
+    });
     
     document.getElementById('unread-count').textContent = unreadCount;
     document.getElementById('total-count').textContent = totalCount;
@@ -340,6 +389,9 @@ function renderInbox() {
     if (currentView === 'inbox') {
         messages = currentMessages.filter(m => !m.read);
     }
+    
+    console.log('RENDER: Will show', messages.length, 'messages out of', currentMessages.length);
+    console.log('RENDER: currentMessages contents:', currentMessages.map(m => ({ ref: m.ref, txid: (m.txid || '').substring(0, 20), read: m.read })));
     
     if (messages.length === 0) {
         inboxList.innerHTML = `
@@ -613,6 +665,7 @@ async function sendReply(msg) {
         
         const state = {};
         state[99] = encrypted;
+        console.log('Vendor reply encrypted length:', String(encrypted).length);
         
         console.log('Vendor public key for buyer reply:', vendorPublicKey);
         console.log('Vendor address for buyer reply:', myAddress);
@@ -691,13 +744,13 @@ function initInbox() {
     myAddress = decoded.address;
     
     console.log('Inbox configured for address:', myAddress);
-    
+
     registerCoinNotify();
-    
+
     setTimeout(() => {
         checkForNewCoins();
     }, 2000);
-    
+
     pollingInterval = setInterval(() => {
         checkForNewCoins();
     }, 30000);
