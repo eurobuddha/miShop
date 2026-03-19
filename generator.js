@@ -89,6 +89,7 @@ const VENDOR_CONFIG = {
     obfuscatedAddress: "${config.obfuscated}",
     salt: "${config.salt}",
     obfuscatedApiKey: "${config.obfuscatedApiKey || ''}",
+    vendorPublicKey: "${config.vendorPublicKey || ''}",
     appName: "miShop",
     version: "1.0.0"
 };

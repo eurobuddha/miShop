@@ -17,6 +17,8 @@ let shippingFee = 5;
 let currentMinimaPrice = 0;
 let mxToUsdRate = 0;
 let vendorAddress = null;
+let vendorPublicKey = null;
+let lastOrderReference = null;
 
 const SHIPPING_RATES = {
     uk: 5,
@@ -24,11 +26,77 @@ const SHIPPING_RATES = {
     digital: 0
 };
 
+const CHAINMAIL_ADDRESS = "0x434841494E4D41494C";
+
 function decodeObfuscated(str, salt) {
     const decoded = atob(str);
     const combined = decoded.substring(0, decoded.length - salt.length);
     const obfuscated = decoded.substring(0, decoded.length - salt.length);
     return obfuscated.split('').map((c, i) => String.fromCharCode(c.charCodeAt(0) ^ salt.charCodeAt(i % salt.length))).join('');
+}
+
+function URLencodeString(str) {
+    return encodeURIComponent(str).split("'").join("%27");
+}
+
+function generateOrderReference(productName) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const words = productName.split(/\s+/);
+    const prefix = words.map(w => w.charAt(0).toUpperCase()).slice(0, 3).join('');
+    let suffix = '';
+    for (let i = 0; i < 8; i++) {
+        suffix += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return `${prefix}-${suffix}`;
+}
+
+function getDecodedPublicKey() {
+    const key = VENDOR_CONFIG.vendorPublicKey;
+    if (key && key.startsWith && key.startsWith('Mx')) {
+        return key;
+    }
+    return null;
+}
+
+function sendOrderViaChainMail(orderDetails, publicKey, callback) {
+    console.log('=== sendOrderViaChainMail START ===');
+    
+    if (!publicKey) {
+        callback(false, "Public key not available");
+        return;
+    }
+    
+    // Compose ChainMail message format
+    var chainMailMessage = {
+        type: "SEND",
+        topublickey: publicKey,
+        fromname: "miniShop",
+        subject: "Order: " + orderDetails.ref,
+        message: JSON.stringify({
+            ref: orderDetails.ref,
+            product: orderDetails.product,
+            size: orderDetails.size,
+            amount: orderDetails.amount,
+            currency: orderDetails.currency,
+            delivery: orderDetails.delivery,
+            shipping: orderDetails.shipping,
+            timestamp: orderDetails.timestamp
+        })
+    };
+    
+    console.log('Sending via MDS.comms.broadcast');
+    
+    // Send via MDS.comms.broadcast to all MiniDapps (including ChainMail)
+    var msgStr = JSON.stringify(chainMailMessage);
+    MDS.comms.broadcast(msgStr, function(success) {
+        if (success) {
+            console.log('=== MDS.comms.broadcast SUCCESS ===');
+            callback(true, { sent: true });
+        } else {
+            console.log('=== MDS.comms.broadcast FAILED ===');
+            callback(false, "Failed to send via ChainMail");
+        }
+    });
 }
 
 async function saveLastPrice(price) {
@@ -513,12 +581,15 @@ async function processPayment() {
     const emailAddress = document.getElementById('email-address').value.trim();
     const isUnitsMode = PRODUCT.mode === 'units';
     let productPrice;
+    let sizeLabel;
     
     if (isUnitsMode) {
         productPrice = PRODUCT.pricePerUnit * selectedQuantity;
+        sizeLabel = `${selectedQuantity} unit${selectedQuantity > 1 ? 's' : ''}`;
     } else {
         const size = PRODUCT.sizes.find(s => s.id === selectedSize);
         productPrice = PRODUCT.pricePerGram * size.weight;
+        sizeLabel = `${size.name} (${size.weight}g)`;
     }
     
     const totalPrice = productPrice + shippingFee;
@@ -544,6 +615,13 @@ async function processPayment() {
     showPaymentStatus('Preparing transaction...', 'pending');
     
     try {
+        if (!vendorPublicKey) {
+            showPaymentStatus('Error: ChainMail public key not configured', 'error');
+            payBtn.disabled = false;
+            payBtn.querySelector('.btn-text').textContent = '💸 Pay Now';
+            return;
+        }
+        
         let sendAmount;
         let tokenName;
         if (selectedPaymentMethod === 'USDT') {
@@ -556,40 +634,62 @@ async function processPayment() {
         
         payBtn.querySelector('.btn-text').textContent = `Pay ${totalPrice.toFixed(2)} USD`;
         
-        const cleanAddress = deliveryInfo
-            .replace(/\n/g, ', ')
-            .replace(/"/g, "'")
-            .replace(/\\/g, '')
-            .substring(0, 200);
+        lastOrderReference = generateOrderReference(PRODUCT.name);
         
-        let command;
-        if (selectedPaymentMethod === 'USDT') {
-            command = `send address:${vendorAddress} amount:${sendAmount.toFixed(8)} tokenid:${TOKEN_IDS.USDT} state:{"44":"[${cleanAddress}]"}`;
-        } else {
-            command = `send address:${vendorAddress} amount:${sendAmount.toFixed(8)} tokenid:${TOKEN_IDS.MINIMA} state:{"44":"[${cleanAddress}]"}`;
-        }
+        const messagePayload = {
+            ref: lastOrderReference,
+            product: PRODUCT.name,
+            size: sizeLabel,
+            amount: totalPrice.toFixed(2),
+            currency: tokenName,
+            delivery: deliveryInfo,
+            shipping: selectedShipping,
+            timestamp: Date.now()
+        };
         
-        console.log('Send command:', command);
+        console.log('Sending order via ChainMail:', JSON.stringify(messagePayload));
+        showPaymentStatus('Sending order via ChainMail...', 'pending');
         
-        MDS.cmd(command, (response) => {
-            console.log('MDS Response:', JSON.stringify(response));
-            
-            if (response && response.status) {
-                const txid = response.response?.txnid || response.response?.tx?.pow || 'confirmed';
-                payBtn.querySelector('.btn-text').textContent = '✓ Sent!';
-                payBtn.classList.add('sent');
-                showPaymentStatus('Transaction sent! TX: ' + txid.substring(0, 20) + '...', 'success');
-                
-                setTimeout(() => {
-                    closeModal();
-                    showConfirmation(txid);
-                }, 3000);
-            } else {
-                const errorMsg = response?.error || 'Transaction may have failed';
-                showPaymentStatus(errorMsg, 'error');
+        sendOrderViaChainMail(messagePayload, vendorPublicKey, (msgSuccess, msgResponse) => {
+            if (!msgSuccess) {
+                showPaymentStatus('Failed to send order: ' + msgResponse, 'error');
                 payBtn.disabled = false;
                 payBtn.querySelector('.btn-text').textContent = '💸 Pay Now';
+                return;
             }
+            
+            console.log('Order sent via ChainMail:', JSON.stringify(msgResponse));
+            showPaymentStatus('Sending payment...', 'pending');
+            
+            let command;
+            if (selectedPaymentMethod === 'USDT') {
+                command = `send address:${vendorAddress} amount:${sendAmount.toFixed(8)} tokenid:${TOKEN_IDS.USDT}`;
+            } else {
+                command = `send address:${vendorAddress} amount:${sendAmount.toFixed(8)} tokenid:${TOKEN_IDS.MINIMA}`;
+            }
+            
+            console.log('Payment command:', command);
+            
+            MDS.cmd(command, (response) => {
+                console.log('MDS Payment Response:', JSON.stringify(response));
+                
+                if (response && response.status) {
+                    const txid = response.response?.txnid || response.response?.tx?.pow || 'confirmed';
+                    payBtn.querySelector('.btn-text').textContent = '✓ Sent!';
+                    payBtn.classList.add('sent');
+                    showPaymentStatus('Transaction sent! TX: ' + txid.substring(0, 20) + '...', 'success');
+                    
+                    setTimeout(() => {
+                        closeModal();
+                        showConfirmation(txid, lastOrderReference);
+                    }, 3000);
+                } else {
+                    const errorMsg = response?.error || 'Payment may have failed';
+                    showPaymentStatus(errorMsg + ' (but order was sent via ChainMail)', 'error');
+                    payBtn.disabled = false;
+                    payBtn.querySelector('.btn-text').textContent = '💸 Pay Now';
+                }
+            });
         });
         
         setTimeout(() => {
@@ -618,8 +718,9 @@ function hidePaymentStatus() {
     statusEl.classList.add('hidden');
 }
 
-function showConfirmation(txid) {
+function showConfirmation(txid, orderRef) {
     document.getElementById('tx-id').textContent = txid || 'Pending...';
+    document.getElementById('order-ref').textContent = orderRef || lastOrderReference || 'N/A';
     document.getElementById('confirmation-modal').classList.remove('hidden');
 }
 
@@ -632,6 +733,23 @@ function validateVendorAddress() {
         const decoded = JSON.parse(atob(VENDOR_CONFIG.obfuscatedAddress));
         if (decoded.address && decoded.address.startsWith('0x')) {
             vendorAddress = decoded.address;
+            
+            vendorPublicKey = getDecodedPublicKey();
+            
+            if (!vendorPublicKey) {
+                console.error('Missing or invalid ChainMail public key in config');
+                document.querySelector('.main-content').innerHTML = `
+                    <div class="product-card" style="text-align: center; padding: 3rem;">
+                        <h2 style="color: #c62828;">⚠️ Configuration Error</h2>
+                        <p style="color: #333; margin-top: 1rem;">
+                            ChainMail public key is missing or invalid.<br>
+                            Please regenerate your MiniDapp with a valid config.
+                        </p>
+                    </div>
+                `;
+                return false;
+            }
+            
             return true;
         }
     } catch (e) {
