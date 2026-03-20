@@ -393,19 +393,19 @@ async function saveMessages(messages) {
 async function loadMessages() {
     const data = await loadFile(MESSAGES_STORAGE_KEY);
     if (!data || data === 'undefined') {
-        console.log('loadMessages: no file data, returning empty');
+        console.log('loadMessages: no file data, returning empty (will rebuild from chain)');
         return [];
     }
     try {
         const msgs = JSON.parse(data);
         if (!Array.isArray(msgs)) {
-            console.error('loadMessages: file data is not an array, returning empty');
+            console.error('loadMessages: file data is not an array (' + typeof msgs + '), returning empty (will rebuild from chain)');
             return [];
         }
         console.log('loadMessages: loaded', msgs.length, 'messages from file');
         return msgs;
     } catch (e) {
-        console.error('loadMessages: parse error', e);
+        console.error('loadMessages: parse error, returning empty (will rebuild from chain):', e);
         return [];
     }
 }
@@ -615,10 +615,16 @@ function processIncomingMessage(coin) {
 }
 
 function processReplyMessage(coin) {
-    const stateData = getState99Data(coin.state);
-    if (!stateData) return;
+    const coinTxid = coin.txid || coin.txnid || coin.coinid || '';
+    console.log('processReplyMessage: coin txid =', coinTxid.substring(0, 20), 'address =', coin.address);
     
-    console.log('Processing reply message...');
+    const stateData = getState99Data(coin.state);
+    if (!stateData) {
+        console.log('processReplyMessage: no state[99] data found');
+        return;
+    }
+    
+    console.log('Processing reply message, state[99] length:', stateData.length);
     
     decryptMessage(stateData).then((decrypted) => {
         if (decrypted) {
@@ -637,7 +643,7 @@ function processReplyMessage(coin) {
                 product: decrypted.originalOrder || '',
                 message: decrypted.message || '',
                 timestamp: decrypted.timestamp || Date.now(),
-                txid: coin.txid || coin.txnid || coin.coinid || '',
+                txid: coinTxid,
                 read: false,
                 direction: 'received',
                 vendorPublicKey: decrypted.vendorPublicKey || decrypted._senderPublicKey || null,
@@ -753,10 +759,77 @@ async function recoverRepliesFromChain() {
         
         if (recovered > 0) {
             console.log(`Reply chain recovery complete: ${recovered} replies recovered`);
+        } else {
+            console.log('Reply recovery: txpow query found 0, trying coins query...');
+            await recoverRepliesFromCoins();
         }
         
     } catch (err) {
         console.error('Reply recovery error:', err);
+    }
+}
+
+async function recoverRepliesFromCoins() {
+    if (!buyerInboxAddress) return;
+    
+    try {
+        const result = await new Promise((resolve) => {
+            MDS.cmd('coins address:' + buyerInboxAddress, resolve);
+        });
+        
+        if (!result || !result.status || !Array.isArray(result.response)) {
+            console.log('Reply recovery (coins): no UTXOs found');
+            return;
+        }
+        
+        console.log('Reply recovery (coins): checking', result.response.length, 'UTXOs');
+        
+        let recovered = 0;
+        for (const coin of result.response) {
+            const coinTxid = coin.txid || coin.txnid || coin.coinid || '';
+            const exists = currentMessages.find(m => m.txid === coinTxid);
+            if (exists) continue;
+            
+            const stateData = getState99Data(coin.state);
+            if (!stateData) continue;
+            
+            console.log('Reply recovery (coins): found state[99] in UTXO:', coinTxid.substring(0, 20));
+            
+            const decrypted = await decryptMessage(stateData);
+            if (!decrypted) {
+                console.log('Reply recovery (coins): could not decrypt');
+                continue;
+            }
+            
+            if (decrypted.type !== 'REPLY') continue;
+            
+            const message = {
+                id: Date.now().toString() + '_' + Math.random(),
+                ref: decrypted.ref || 'REPLY-' + Date.now(),
+                type: 'REPLY',
+                subject: 'Reply: ' + (decrypted.ref || 'Order'),
+                product: decrypted.originalOrder || '',
+                message: decrypted.message || '',
+                timestamp: decrypted.timestamp || Date.now(),
+                txid: coinTxid,
+                read: false,
+                direction: 'received',
+                vendorPublicKey: decrypted.vendorPublicKey || decrypted._senderPublicKey || null,
+                vendorAddress: decrypted.vendorAddress || null
+            };
+            
+            addMessage(message);
+            if (decrypted.ref) acknowledgeOrder(decrypted.ref);
+            recovered++;
+        }
+        
+        if (recovered > 0) {
+            console.log(`Reply recovery (coins): ${recovered} replies recovered`);
+        } else {
+            console.log('Reply recovery (coins): no new replies found');
+        }
+    } catch (err) {
+        console.error('Reply recovery (coins) error:', err);
     }
 }
 
@@ -771,20 +844,25 @@ function startReplyPolling() {
         if (!buyerInboxAddress) return;
         
         MDS.cmd('coins address:' + buyerInboxAddress, (response) => {
-            if (response.status && response.response) {
+            if (response && response.status && response.response) {
                 let coins = response.response;
                 if (typeof coins === 'string') {
                     try {
                         coins = JSON.parse(coins);
                     } catch (e) {
+                        console.error('coins polling: failed to parse response');
                         return;
                     }
                 }
                 
                 if (Array.isArray(coins)) {
+                    if (coins.length === 0) {
+                        console.log('coins polling: no UTXOs at buyer inbox address');
+                    }
                     for (const coin of coins) {
+                        const coinTxid = coin.txid || coin.txnid || coin.coinid || '';
                         if (getState99Data(coin.state)) {
-                            const exists = currentMessages.find(m => m.txid === (coin.txid || coin.coinid));
+                            const exists = currentMessages.find(m => m.txid === coinTxid);
                             if (!exists) {
                                 console.log('Found new reply via polling!');
                                 processReplyMessage(coin);
@@ -792,6 +870,8 @@ function startReplyPolling() {
                         }
                     }
                 }
+            } else {
+                console.error('coins polling: command failed or returned no data');
             }
         });
         

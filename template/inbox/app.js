@@ -473,19 +473,19 @@ async function saveMessages(messages) {
 async function loadMessages() {
     const data = await loadFile(MESSAGES_FILE_KEY);
     if (!data || data === 'undefined') {
-        console.log('loadMessages: no file data, returning empty');
+        console.log('loadMessages: no file data, returning empty (will rebuild from chain)');
         return [];
     }
     try {
         const msgs = JSON.parse(data);
         if (!Array.isArray(msgs)) {
-            console.error('loadMessages: file data is not an array, returning empty');
+            console.error('loadMessages: file data is not an array (' + typeof msgs + '), returning empty (will rebuild from chain)');
             return [];
         }
         console.log('loadMessages: loaded', msgs.length, 'messages from file');
         return msgs;
     } catch (e) {
-        console.error('loadMessages: parse error', e);
+        console.error('loadMessages: parse error, returning empty (will rebuild from chain):', e);
         return [];
     }
 }
@@ -725,10 +725,17 @@ function renderInbox() {
     
     document.getElementById('unread-count').textContent = unreadCount;
     document.getElementById('total-count').textContent = totalCount;
+    const sentCount = currentMessages.filter(m => m.direction === 'sent').length;
+    const sentCountEl = document.getElementById('sent-count');
+    if (sentCountEl) sentCountEl.textContent = sentCount;
     
     let messages = currentMessages;
     if (currentView === 'inbox') {
-        messages = currentMessages.filter(m => !m.read);
+        messages = currentMessages.filter(m => !m.read && m.direction !== 'sent');
+    } else if (currentView === 'all') {
+        messages = currentMessages.filter(m => m.direction !== 'sent');
+    } else if (currentView === 'sent') {
+        messages = currentMessages.filter(m => m.direction === 'sent');
     }
     
     console.log('RENDER: Will show', messages.length, 'messages out of', currentMessages.length);
@@ -737,10 +744,10 @@ function renderInbox() {
     if (messages.length === 0) {
         inboxList.innerHTML = `
             <div class="empty-inbox">
-                <div class="empty-icon">${currentView === 'inbox' ? '📭' : '✅'}</div>
-                <p>${currentView === 'inbox' ? 'No unread orders' : 'No orders yet'}</p>
-                <p class="empty-hint">Orders from your shops will appear here</p>
-                <button class="refresh-btn" id="refresh-btn">🔄 Check for Orders</button>
+                <div class="empty-icon">${currentView === 'inbox' ? '📭' : (currentView === 'sent' ? '📤' : '✅')}</div>
+                <p>${currentView === 'inbox' ? 'No unread orders' : (currentView === 'sent' ? 'No sent replies' : 'No orders yet')}</p>
+                <p class="empty-hint">${currentView === 'sent' ? 'Replies you send to buyers will appear here' : 'Orders from your shops will appear here'}</p>
+                ${currentView !== 'sent' ? '<button class="refresh-btn" id="refresh-btn">🔄 Check for Orders</button>' : ''}
             </div>
         `;
         setupRefreshButton();
@@ -749,17 +756,18 @@ function renderInbox() {
     
     inboxList.innerHTML = messages.map(msg => {
         const isBuyerReply = msg.type === 'BUYER_REPLY';
+        const isSent = msg.direction === 'sent';
         return `
-        <div class="message-item ${!msg.read ? 'unread' : ''} ${isBuyerReply ? 'buyer-reply' : ''}" data-id="${msg.id}">
-            <div class="message-icon">${isBuyerReply ? '↩️' : (msg.read ? '📧' : '📨')}</div>
+        <div class="message-item ${!msg.read && !isSent ? 'unread' : ''} ${isBuyerReply ? 'buyer-reply' : ''} ${isSent ? 'sent-message' : ''}" data-id="${msg.id}">
+            <div class="message-icon">${isSent ? '📤' : (isBuyerReply ? '↩️' : (msg.read ? '📧' : '📨'))}</div>
             <div class="message-preview">
-                <div class="message-ref">${isBuyerReply ? '↩️ ' : ''}${msg.ref}</div>
-                <div class="message-product">${isBuyerReply ? 'Buyer Reply' : msg.product}</div>
+                <div class="message-ref">${isSent ? '↩️ ' : ''}${isSent ? msg.originalRef || msg.ref : (isBuyerReply ? '↩️ ' : '') + msg.ref}</div>
+                <div class="message-product">${isSent ? (msg.originalProduct || msg.originalOrder || 'Reply') : (isBuyerReply ? 'Buyer Reply' : msg.product)}</div>
                 <div class="message-meta">
-                    ${isBuyerReply ? '<span class="message-type">Buyer Reply</span>' : `
+                    ${isSent ? '<span class="message-type sent-type">📤 Sent Reply</span>' : (isBuyerReply ? '<span class="message-type">Buyer Reply</span>' : `
                     <span class="message-size">${msg.size}</span>
                     <span class="message-amount">$${msg.amount} ${msg.currency}</span>
-                    `}
+                    `)}
                 </div>
             </div>
             <div class="message-time">${formatTime(msg.timestamp)}</div>
@@ -800,6 +808,43 @@ function showMessageDetail(msg) {
     
     const modal = document.getElementById('message-modal');
     const isBuyerReply = msg.type === 'BUYER_REPLY';
+    
+    if (msg.direction === 'sent') {
+        document.getElementById('modal-title').textContent = '📤 Sent Reply: ' + (msg.originalRef || msg.ref);
+        document.getElementById('modal-direction').textContent = '📤 Sent';
+        document.getElementById('modal-txid').textContent = msg.txid ? msg.txid.substring(0, 30) + '...' : '-';
+        
+        document.getElementById('modal-info').innerHTML = `
+            <div class="info-row">
+                <span class="info-label">Order Ref:</span>
+                <span class="info-value">${msg.originalRef || msg.ref}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Original Order:</span>
+                <span class="info-value">${msg.originalProduct || msg.originalOrder || 'N/A'}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Time Sent:</span>
+                <span class="info-value">${new Date(msg.timestamp).toLocaleString()}</span>
+            </div>
+            <div class="reply-content">
+                <h4>Your Reply:</h4>
+                <p class="reply-message">${msg.message || 'No message'}</p>
+            </div>
+            <div class="info-row">
+                <span class="info-label">To Buyer:</span>
+                <span class="info-value">${msg.buyerAddress ? msg.buyerAddress.substring(0, 20) + '...' : 'Unknown'}</span>
+            </div>
+        `;
+        
+        document.getElementById('copy-address-btn').style.display = 'none';
+        document.getElementById('mark-read-btn').style.display = 'none';
+        document.getElementById('reply-action').style.display = 'none';
+        document.getElementById('reply-btn').disabled = true;
+        
+        modal.classList.remove('hidden');
+        return;
+    }
     
     if (isBuyerReply) {
         document.getElementById('modal-title').textContent = '↩️ Buyer Reply: ' + msg.ref;
@@ -1021,6 +1066,26 @@ async function sendReply(msg) {
                 statusEl.textContent = 'Reply sent! TX: ' + txid.substring(0, 20) + '...';
                 statusEl.className = 'reply-status success';
                 sendBtn.textContent = '✓ Sent!';
+                
+                const sentMsg = {
+                    id: Date.now().toString(),
+                    txid: txid,
+                    ref: msg.ref,
+                    originalRef: msg.ref,
+                    originalOrder: msg.product ? (msg.product + ' - ' + (msg.size || '')) : msg.ref,
+                    originalProduct: msg.product ? (msg.product + ' - ' + (msg.size || '')) : '',
+                    message: messageText,
+                    timestamp: Date.now(),
+                    type: 'REPLY',
+                    direction: 'sent',
+                    buyerPublicKey: msg.buyerPublicKey || '',
+                    buyerAddress: msg.buyerAddress || ''
+                };
+                const exists = currentMessages.find(m => m.id === sentMsg.id);
+                if (!exists) {
+                    currentMessages.unshift(sentMsg);
+                    saveMessages(currentMessages);
+                }
                 
                 setTimeout(() => {
                     closeReplyModal();

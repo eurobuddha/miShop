@@ -167,6 +167,10 @@ body {
     background: var(--brown);
 }
 
+#sent-tab .badge.secondary {
+    background: #3498db;
+}
+
 .inbox-list {
     max-height: 500px;
     overflow-y: auto;
@@ -241,6 +245,16 @@ body {
 .message-item.buyer-reply.unread {
     background: rgba(155, 89, 182, 0.25);
     border-left: 4px solid var(--bright-orange);
+}
+
+.message-item.sent-message {
+    background: rgba(52, 152, 219, 0.15);
+    border-left: 4px solid #3498db;
+}
+
+.sent-type {
+    color: #3498db;
+    font-weight: 700;
 }
 
 .message-icon {
