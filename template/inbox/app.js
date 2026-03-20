@@ -46,11 +46,7 @@ function loadFile(key) {
         MDS.file.load(key, (response) => {
             if (response && response.status && response.response != null) {
                 fileReady = true;
-                if (typeof response.response === 'string') {
-                    resolve(response.response);
-                } else {
-                    resolve(JSON.stringify(response.response));
-                }
+                resolve(response.response);
             } else {
                 console.log('loadFile: MDS load failed/unavailable for', key, 'trying localStorage');
                 const local = localStorage.getItem(key);
@@ -145,7 +141,19 @@ async function isTxProcessed(txid) {
     const data = await loadFile(MESSAGES_FILE_KEY);
     if (!data) return false;
     try {
-        let messages = typeof data === 'string' ? JSON.parse(data) : data;
+        let messages;
+        if (typeof data === 'string') {
+            messages = JSON.parse(data);
+        } else if (data !== null && typeof data === 'object') {
+            if (Array.isArray(data)) {
+                messages = data;
+            } else {
+                const extracted = Object.values(data).find(v => Array.isArray(v));
+                messages = extracted || [];
+            }
+        } else {
+            messages = [];
+        }
         if (!Array.isArray(messages)) return false;
         return messages.some(m => m.txid === txid);
     } catch (e) {
@@ -518,15 +526,19 @@ async function loadMessages() {
     try {
         let msgs;
         if (typeof data === 'string') {
-            msgs = JSON.parse(data);
-        } else if (typeof data === 'object' && data !== null && Array.isArray(data)) {
-            msgs = data;
+            try { msgs = JSON.parse(data); } catch { msgs = null; }
+        } else if (data !== null && typeof data === 'object') {
+            if (Array.isArray(data)) {
+                msgs = data;
+            } else {
+                const extracted = Object.values(data).find(v => Array.isArray(v));
+                msgs = extracted || data;
+            }
         } else {
-            console.error('loadMessages: file data is not an array (' + typeof data + '), falling back to SQL');
-            return loadMessagesFromDb();
+            msgs = null;
         }
         if (!Array.isArray(msgs)) {
-            console.error('loadMessages: parsed data is not an array (' + typeof msgs + '), falling back to SQL');
+            console.error('loadMessages: not an array, falling back to SQL');
             return loadMessagesFromDb();
         }
         console.log('loadMessages: loaded', msgs.length, 'messages from file');
@@ -966,6 +978,20 @@ function showMessageDetail(msg) {
     const modal = document.getElementById('message-modal');
     const isBuyerReply = msg.type === 'BUYER_REPLY';
     
+    // Reset all button/action states to clean defaults before any branch
+    const replyBtn = document.getElementById('reply-btn');
+    const replyAction = document.getElementById('reply-action');
+    const replyWarning = document.getElementById('reply-warning');
+    replyBtn.disabled = false;
+    replyBtn.style.opacity = '1';
+    replyBtn.style.cursor = 'pointer';
+    replyBtn.textContent = '↩️ Reply to Buyer';
+    replyBtn.onclick = null;
+    replyAction.style.display = 'none';
+    replyWarning.style.display = 'none';
+    document.getElementById('copy-address-btn').style.display = 'none';
+    document.getElementById('mark-read-btn').style.display = 'none';
+    
     if (msg.direction === 'sent') {
         document.getElementById('modal-title').textContent = '📤 Sent Reply: ' + (msg.originalRef || msg.ref);
         document.getElementById('modal-direction').textContent = '📤 Sent';
@@ -1042,10 +1068,6 @@ function showMessageDetail(msg) {
             };
         }
         
-        const replyBtn = document.getElementById('reply-btn');
-        const replyAction = document.getElementById('reply-action');
-        const replyWarning = document.getElementById('reply-warning');
-        
         if (msg.buyerPublicKey && msg.buyerAddress) {
             replyAction.style.display = 'block';
             replyWarning.style.display = 'none';
@@ -1121,10 +1143,6 @@ function showMessageDetail(msg) {
         };
     }
     
-    const replyBtn = document.getElementById('reply-btn');
-    const replyAction = document.getElementById('reply-action');
-    const replyWarning = document.getElementById('reply-warning');
-    
     if (msg.buyerPublicKey && msg.buyerAddress) {
         replyAction.style.display = 'block';
         replyWarning.style.display = 'none';
@@ -1132,6 +1150,7 @@ function showMessageDetail(msg) {
     } else {
         replyAction.style.display = 'block';
         replyWarning.style.display = 'block';
+        replyWarning.textContent = '⚠️ Cannot reply - missing buyer contact info';
         replyBtn.disabled = true;
         replyBtn.style.opacity = '0.5';
         replyBtn.style.cursor = 'not-allowed';
