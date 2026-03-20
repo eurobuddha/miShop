@@ -23,11 +23,13 @@ function obfuscateApiKey(apiKey, salt) {
     return Buffer.from(obfuscated + salt).toString('base64');
 }
 
-function saveConfig(obfuscatedAddress, salt, obfuscatedApiKey) {
+function saveConfig(obfuscatedAddress, salt, obfuscatedApiKey, vendorPublicKey, inboxPublicKey) {
     const config = {
         obfuscated: obfuscatedAddress,
         salt: salt,
         obfuscatedApiKey: obfuscatedApiKey,
+        vendorPublicKey: vendorPublicKey,
+        inboxPublicKey: inboxPublicKey || '',
         created: new Date().toISOString()
     };
     
@@ -47,21 +49,31 @@ function loadConfig() {
 if (require.main === module) {
     const address = process.argv[2];
     const apiKey = process.argv[3];
+    const publicKey = process.argv[4];
+    const inboxPublicKey = process.argv[5];
     
-    if (!address || !apiKey) {
+    if (!address || !apiKey || !publicKey) {
         console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║           miShop Generator - Setup                   ║
 ╠═══════════════════════════════════════════════════════════╣
-║  This script configures your vendor payment address      ║
-║  and CoinMarketCap API key.                             ║
-║  The values are obfuscated so they cannot be changed    ║
-║  by users of your generated MiniDapps.                  ║
+║  This script configures your vendor settings:            ║
+║  - Payment address for Minima transactions               ║
+║  - CoinMarketCap API key for price fetching              ║
+║  - ChainMail public key for encrypted messages          ║
+║  - Inbox public key for receiving orders (optional)     ║
+║  Values are obfuscated to prevent tampering by users.   ║
 ╚═══════════════════════════════════════════════════════════╝
 
-Usage: node setup.js <minima-address> <cmc-api-key>
+Usage: node setup.js <minima-address> <cmc-api-key> <chainmail-public-key> [inbox-public-key]
 
-Example: node setup.js 0x465CA86A9B5756F45DEB667A69B3DBEC1B82B211814B294ED32693603F28AD37 c1d37f5f89564ca5868d21e2303c281b
+Example: 
+  node setup.js 0x465CA86A9B5756F45DEB667A69B3DBEC1B82B211814B294ED32693603F28AD37 c1d37f5f89564ca5868d21e2303c281b MxG18HGG6FJ038614Y8CW46US6G20810K0070CD00Z83282G60G19TUFFWSB6EEF0619DH9A069ECNU1TNEFRBHKTE8DU5T9740QUW30BH9F45YSZUM5SSVUHU36WFGSWDZS6CZYGB4AJG83VQPUF42R6S11Z9R70MUQCJRG202YQK7Z4FS904R7V4W8ZBHK7D5STVHK1GYSV54HJSBRE1MUTHNHCCGV9BUWE2FZBEND91D421Z6V2Z7BRGMTECVC10608006P3DB2S
+
+To get your inbox public key:
+  1. Install miShopInbox.mds.zip in MiniMask
+  2. The inbox will display your public key
+  3. Copy it and add as the 4th parameter
 `);
         process.exit(1);
     }
@@ -69,6 +81,20 @@ Example: node setup.js 0x465CA86A9B5756F45DEB667A69B3DBEC1B82B211814B294ED326936
     // Validate address format
     if (!address.match(/^0x[a-fA-F0-9]{64}$/)) {
         console.error('❌ Invalid Minima address format. Address must start with 0x and be 66 characters.');
+        process.exit(1);
+    }
+    
+    // Validate public key format
+    if (!publicKey || !publicKey.startsWith('Mx')) {
+        console.error('❌ Invalid ChainMail public key format. Key must start with "Mx".');
+        console.error('   Get your public key from the ChainMail MiniDapp.');
+        process.exit(1);
+    }
+    
+    // Validate inbox public key format if provided
+    if (inboxPublicKey && !inboxPublicKey.startsWith('Mx')) {
+        console.error('❌ Invalid inbox public key format. Key must start with "Mx".');
+        console.error('   Get your inbox public key from the miShopInbox MiniDapp.');
         process.exit(1);
     }
     
@@ -93,11 +119,13 @@ Example: node setup.js 0x465CA86A9B5756F45DEB667A69B3DBEC1B82B211814B294ED326936
 
 🔐 Generating obfuscated config...
 
-Address: ${address.substring(0, 10)}...${address.substring(address.length - 8)}
-CMC Key:  ${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}
+Address:    ${address.substring(0, 10)}...${address.substring(address.length - 8)}
+CMC Key:    ${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}
+Public Key: ${publicKey.substring(0, 12)}...${publicKey.substring(publicKey.length - 8)}
+${inboxPublicKey ? `Inbox Key:  ${inboxPublicKey.substring(0, 12)}...${inboxPublicKey.substring(inboxPublicKey.length - 8)}` : ''}
 `);
     
-    saveConfig(obfuscated, salt, obfuscatedApiKey);
+    saveConfig(obfuscated, salt, obfuscatedApiKey, publicKey, inboxPublicKey);
     
     console.log(`
 ✅ Setup complete!

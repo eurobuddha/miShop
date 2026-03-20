@@ -4,6 +4,9 @@
 const VENDOR_CONFIG = {
     obfuscatedAddress: "PLACEHOLDER",
     salt: "PLACEHOLDER",
+    obfuscatedApiKey: "",
+    vendorPublicKey: "PLACEHOLDER",
+    inboxPublicKey: "PLACEHOLDER",
     appName: "miShop",
     version: "1.0.0"
 };

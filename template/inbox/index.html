@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>miShop Inbox</title>
+    <link rel="icon" href="icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="tie-dye-bg"></div>
+    
+    <header class="header">
+        <div class="logo">
+            <span class="logo-icon">📬</span>
+            <h1>miShop Inbox</h1>
+        </div>
+        <div class="header-decoration">
+            <svg class="peace-sign" viewBox="0 0 100 100" width="40" height="40">
+                <circle cx="50" cy="50" r="45" fill="none" stroke="#FFD700" stroke-width="4"/>
+                <line x1="50" y1="5" x2="50" y2="50" stroke="#FFD700" stroke-width="4"/>
+                <line x1="50" y1="50" x2="85" y2="75" stroke="#FFD700" stroke-width="4"/>
+                <line x1="50" y1="50" x2="15" y2="75" stroke="#FFD700" stroke-width="4"/>
+                <circle cx="50" cy="50" r="20" fill="#FFD700"/>
+                <circle cx="50" cy="50" r="12" fill="#2D5016"/>
+            </svg>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="inbox-container">
+            <div class="inbox-tabs">
+                <button class="inbox-tab active" data-view="inbox">
+                    📥 Inbox <span class="badge" id="unread-count">0</span>
+                </button>
+                <button class="inbox-tab" data-view="all">
+                    📋 All Orders <span class="badge secondary" id="total-count">0</span>
+                </button>
+            </div>
+            
+            <div class="inbox-list" id="inbox-list">
+                <div class="empty-inbox">
+                    <div class="empty-icon">📭</div>
+                    <p>No orders yet</p>
+                    <p class="empty-hint">Orders from your shops will appear here</p>
+                    <button class="refresh-btn" id="refresh-btn">🔄 Check for Orders</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="message-modal" class="modal hidden">
+        <div class="modal-content message-detail">
+            <button class="modal-close">&times;</button>
+            
+            <div class="message-header">
+                <h2 id="modal-title">Order Details</h2>
+                <span class="message-direction" id="modal-direction">📥</span>
+            </div>
+            
+            <div class="message-info" id="modal-info">
+            </div>
+            
+            <div class="message-actions">
+                <button class="action-btn" id="copy-address-btn">📋 Copy Delivery Address</button>
+                <button class="action-btn secondary" id="mark-read-btn">✓ Mark as Read</button>
+            </div>
+            <div class="reply-action" id="reply-action" style="display: none;">
+                <button class="action-btn reply-btn" id="reply-btn">↩️ Reply to Buyer</button>
+                <p class="reply-warning" id="reply-warning" style="display: none; color: #c62828; font-size: 0.8rem; margin-top: 0.5rem;">⚠️ Buyer contact info missing - cannot reply</p>
+            </div>
+            
+            <div class="message-tx">
+                <span class="tx-label">TX ID:</span>
+                <span class="tx-id" id="modal-txid">-</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="reply-modal" class="modal hidden">
+        <div class="modal-content reply-modal-content">
+            <button class="modal-close" id="reply-modal-close">&times;</button>
+            
+            <div class="message-header">
+                <h2>Reply to Buyer</h2>
+                <span class="message-direction" id="reply-to-address">-</span>
+            </div>
+            
+            <div class="reply-form">
+                <p class="reply-order-ref">Order: <span id="reply-order-ref">-</span></p>
+                <textarea id="reply-message" placeholder="Type your reply message..." rows="6"></textarea>
+                <div class="reply-status" id="reply-status"></div>
+            </div>
+            
+            <div class="message-actions">
+                <button class="action-btn" id="send-reply-btn">📤 Send Reply</button>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <p>Powered by <span class="minima-text">Minima</span> Blockchain</p>
+        <p class="peace">☮️ Peace, Love & Decentralisation ☮️</p>
+    </footer>
+
+    <script src="config.js"></script>
+    <script src="mds.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

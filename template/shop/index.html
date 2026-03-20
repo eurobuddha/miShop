@@ -31,74 +31,6 @@
     </header>
 
     <main class="main-content">
-        <div class="product-card">
-            <div class="product-image-container">
-                <img id="product-image" src="item.jpg" alt="Product" class="product-image">
-                <div class="product-badge">Fresh</div>
-            </div>
-            
-            <div class="product-info">
-                <h2 id="product-name" class="product-name">Loading...</h2>
-                <p id="product-description" class="product-description">Loading product details...</p>
-                
-                <div class="price-display">
-                    <div class="price-usd">
-                        <span class="price-label">Price (MXUSDT)</span>
-                        <span id="price-usd-value" class="price-value">$0.00</span>
-                    </div>
-                    <div class="price-crypto">
-                        <span class="price-label">in Minima</span>
-                        <span id="price-minima" class="price-value crypto">-- Minima</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="size-selector" id="size-selector">
-                <h3 id="selector-title">Choose Your Size</h3>
-                <div class="size-options">
-                    <button class="size-btn" data-size="full">
-                        <span class="size-name">Full</span>
-                        <span class="size-weight">28g</span>
-                        <span class="size-percent">100%</span>
-                    </button>
-                    <button class="size-btn" data-size="half">
-                        <span class="size-name">Half</span>
-                        <span class="size-weight">14g</span>
-                        <span class="size-percent">50%</span>
-                    </button>
-                    <button class="size-btn" data-size="quarter">
-                        <span class="size-name">Quarter</span>
-                        <span class="size-weight">7g</span>
-                        <span class="size-percent">25%</span>
-                    </button>
-                    <button class="size-btn active" data-size="eighth">
-                        <span class="size-name">Eighth</span>
-                        <span class="size-weight">3.5g</span>
-                        <span class="size-percent">12.5%</span>
-                    </button>
-                </div>
-            </div>
-
-            <div class="quantity-selector hidden" id="quantity-selector">
-                <h3>Choose Quantity</h3>
-                <div class="quantity-input">
-                    <button class="qty-btn qty-minus" id="qty-minus">−</button>
-                    <input type="number" id="quantity-input" value="1" min="1" max="10">
-                    <button class="qty-btn qty-plus" id="qty-plus">+</button>
-                </div>
-                <p class="quantity-label"><span id="quantity-display">1</span> unit(s)</p>
-            </div>
-
-            <button id="buy-btn" class="buy-button">
-                <span class="btn-text">🛒 Buy Now</span>
-                <span class="btn-price">$0.00</span>
-            </button>
-
-            <div id="loading-indicator" class="loading hidden">
-                <div class="spinner"></div>
-                <span>Loading price...</span>
-            </div>
-        </div>
     </main>
 
     <div id="modal" class="modal hidden">
@@ -145,13 +77,9 @@
                         <span>USDT</span>
                     </button>
                     <button class="payment-btn" data-method="MINI">
-<span class="payment-icon">
-                            <svg viewBox="0 0 100 100" width="32" height="32">
-                              <rect x="5" y="25" width="90" height="50" fill="#1a1a1a"/>
-                              <text x="50" y="62" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="bold" fill="#ffffff" text-anchor="middle" letter-spacing="1">MINIMA</text>
-                              <line x1="15" y1="68" x2="85" y2="68" stroke="#e63946" stroke-width="2"/>
-                            </svg>
-                          </span>
+                        <span class="payment-icon">
+                            <img src="minima_logo_bw.svg" alt="Minima" width="32" height="32">
+                        </span>
                         <span>Minima</span>
                     </button>
                 </div>
@@ -205,6 +133,12 @@
             <p>Thanks for your order!</p>
             
             <div class="tx-details">
+                <p><strong>Order Reference:</strong></p>
+                <p id="order-ref" class="tx-id"></p>
+                <p class="tx-note">Quote this reference for support</p>
+            </div>
+            
+            <div class="tx-details">
                 <p><strong>Transaction ID:</strong></p>
                 <p id="tx-id" class="tx-id"></p>
                 <p class="tx-note">Keep this for your records</p>
@@ -216,6 +150,21 @@
             </div>
             
             <button id="close-confirmation" class="close-btn">Back to Shop</button>
+        </div>
+    </div>
+
+    <div id="buyer-reply-modal" class="modal hidden">
+        <div class="modal-content reply-modal">
+            <button class="modal-close" id="buyer-reply-modal-close">&times;</button>
+            <div class="modal-header">
+                <h2>↩️ Reply to Vendor</h2>
+                <p id="buyer-reply-ref"></p>
+            </div>
+            <textarea id="buyer-reply-message" placeholder="Type your reply to the vendor..." rows="5"></textarea>
+            <div id="buyer-reply-status" class="reply-status"></div>
+            <div class="reply-actions">
+                <button id="buyer-send-reply-btn" class="send-reply-btn">📤 Send Reply</button>
+            </div>
         </div>
     </div>
 
