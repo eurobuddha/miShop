@@ -1,4 +1,3 @@
-const MESSAGES_STORAGE_KEY = 'mishop_inbox_messages';
 const TOKEN_IDS = {
     MINIMA: '0x00'
 };
@@ -7,6 +6,296 @@ let currentMessages = [];
 let selectedMessage = null;
 let myAddress = null;
 let pollingInterval = null;
+let dbReady = false;
+let mdsSqlWorking = false;
+
+function escapeSQL(val) {
+    if (val == null) return 'NULL';
+    return "'" + String(val).replace(/'/g, "''") + "'";
+}
+
+async function initDB() {
+    if (dbReady) return;
+    try {
+        await MDS.sql(
+            `CREATE TABLE IF NOT EXISTS messages (` +
+            `id INTEGER PRIMARY KEY AUTOINCREMENT,` +
+            `ref TEXT, type TEXT, product TEXT, size TEXT,` +
+            `amount TEXT, currency TEXT, delivery TEXT, shipping TEXT,` +
+            `message TEXT, timestamp INTEGER, txid TEXT,` +
+            `read INTEGER, buyerPublicKey TEXT, buyerAddress TEXT,` +
+            `UNIQUE(ref, txid))`
+        );
+        await MDS.sql(
+            `CREATE TABLE IF NOT EXISTS processed_txids (` +
+            `txid TEXT PRIMARY KEY, processed_at INTEGER)`
+        );
+        await MDS.sql(
+            `CREATE TABLE IF NOT EXISTS processed_addrs (` +
+            `address TEXT PRIMARY KEY, publickey TEXT, first_seen INTEGER)`
+        );
+        await MDS.sql(
+            `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`
+        );
+        dbReady = true;
+        mdsSqlWorking = true;
+        console.log('Inbox DB initialized successfully, mdsSqlWorking = true');
+    } catch (err) {
+        console.error('Inbox DB init error:', err);
+    }
+}
+
+async function saveMessageToDb(message) {
+    try {
+        await MDS.sql(
+            `INSERT OR REPLACE INTO messages ` +
+            `(ref, type, product, size, amount, currency, delivery, shipping, message, ` +
+            `timestamp, txid, read, buyerPublicKey, buyerAddress) ` +
+            `VALUES (` +
+            `${escapeSQL(message.ref || '')}, ${escapeSQL(message.type || 'ORDER')}, ` +
+            `${escapeSQL(message.product || '')}, ${escapeSQL(message.size || '')}, ` +
+            `${escapeSQL(message.amount || '')}, ${escapeSQL(message.currency || '')}, ` +
+            `${escapeSQL(message.delivery || '')}, ${escapeSQL(message.shipping || '')}, ` +
+            `${escapeSQL(message.message || '')}, ${message.timestamp || Date.now()}, ` +
+            `${escapeSQL(message.txid || '')}, ${message.read ? 1 : 0}, ` +
+            `${escapeSQL(message.buyerPublicKey || '')}, ${escapeSQL(message.buyerAddress || '')})`
+        );
+    } catch (err) {
+        console.error('saveMessageToDb error:', err);
+    }
+}
+
+async function loadMessagesFromDb() {
+    try {
+        const resp = await MDS.sql(`SELECT * FROM messages ORDER BY timestamp DESC`);
+        if (resp && resp.status && resp.rows) {
+            return resp.rows.map(row => ({
+                id: row.id,
+                ref: row.ref,
+                type: row.type,
+                product: row.product,
+                size: row.size,
+                amount: row.amount,
+                currency: row.currency,
+                delivery: row.delivery,
+                shipping: row.shipping,
+                message: row.message,
+                timestamp: row.timestamp,
+                txid: row.txid,
+                read: !!row.read,
+                buyerPublicKey: row.buyerPublicKey,
+                buyerAddress: row.buyerAddress
+            }));
+        }
+    } catch (err) {
+        console.error('loadMessagesFromDb error:', err);
+    }
+    return [];
+}
+
+async function isTxProcessed(txid) {
+    if (!txid) return false;
+    if (!mdsSqlWorking) {
+        return currentMessages.some(m => m.txid === txid);
+    }
+    try {
+        const resp = await MDS.sql(`SELECT txid FROM processed_txids WHERE txid = ${escapeSQL(txid)}`);
+        return !!(resp && resp.status && resp.rows && resp.rows.length > 0);
+    } catch (err) {
+        console.error('isTxProcessed error:', err);
+        return currentMessages.some(m => m.txid === txid);
+    }
+}
+
+async function markTxProcessed(txid) {
+    if (!txid) return;
+    if (!mdsSqlWorking) return;
+    try {
+        await MDS.sql(
+            `INSERT OR IGNORE INTO processed_txids (txid, processed_at) ` +
+            `VALUES (${escapeSQL(txid)}, ${Date.now()})`
+        );
+    } catch (err) {
+        console.error('markTxProcessed error:', err);
+    }
+}
+
+async function loadProcessedAddresses() {
+    try {
+        const resp = await MDS.sql(`SELECT * FROM processed_addrs`);
+        if (resp && resp.status && resp.rows) {
+            const addrs = {};
+            resp.rows.forEach(row => {
+                addrs[row.address] = { publickey: row.publickey, first_seen: row.first_seen };
+            });
+            return addrs;
+        }
+    } catch (err) {
+        console.error('loadProcessedAddresses error:', err);
+    }
+    return {};
+}
+
+async function saveProcessedAddress(address, publickey) {
+    if (!address) return;
+    if (!mdsSqlWorking) return;
+    try {
+        await MDS.sql(
+            `INSERT OR REPLACE INTO processed_addrs (address, publickey, first_seen) ` +
+            `VALUES (${escapeSQL(address)}, ${escapeSQL(publickey || '')}, ${Date.now()})`
+        );
+    } catch (err) {
+        console.error('saveProcessedAddress error:', err);
+    }
+}
+
+async function getLastProcessedBlock() {
+    try {
+        const resp = await MDS.sql(`SELECT value FROM settings WHERE key = 'last_block'`);
+        if (resp && resp.status && resp.rows && resp.rows.length > 0) {
+            return parseInt(resp.rows[0].value) || 0;
+        }
+    } catch (err) {
+        console.error('getLastProcessedBlock error:', err);
+    }
+    return 0;
+}
+
+async function saveLastProcessedBlock(block) {
+    try {
+        await MDS.sql(
+            `INSERT OR REPLACE INTO settings (key, value) VALUES ('last_block', ${escapeSQL(String(block))})`
+        );
+    } catch (err) {
+        console.error('saveLastProcessedBlock error:', err);
+    }
+}
+
+function getStateFromArray(stateArr) {
+    if (!stateArr || !Array.isArray(stateArr)) return null;
+    for (const s of stateArr) {
+        if (s && s.port === 99 && s.data) return s.data;
+    }
+    return null;
+}
+
+async function recoverFromChain() {
+    if (!myAddress) return;
+    
+    console.log('=== RECOVERING FROM CHAIN HISTORY ===');
+    const MAX_BATCH = 500;
+    let offset = 0;
+    let totalRecovered = 0;
+    let hasMore = true;
+    
+    while (hasMore) {
+        try {
+            const cmd = `txpow address:${myAddress} max:${MAX_BATCH}`;
+            const result = await new Promise((resolve) => {
+                MDS.cmd(cmd, resolve);
+            });
+            
+            if (!result || !result.status || !result.response) {
+                console.log('txpow recovery: no response or error');
+                break;
+            }
+            
+            const txpows = result.response;
+            if (!Array.isArray(txpows) || txpows.length === 0) {
+                console.log('txpow recovery: no txpows found');
+                break;
+            }
+            
+            console.log(`txpow recovery: checking ${txpows.length} txpows (offset ${offset})`);
+            
+            for (const txpow of txpows) {
+                if (!txpow || !txpow.hasbody) continue;
+                const body = txpow.body;
+                if (!body || !body.txn) continue;
+                
+                const txn = body.txn;
+                const outputs = txn.outputs || [];
+                
+                for (const output of outputs) {
+                    if (!output || !output.storestate) continue;
+                    
+                    const stateData = getStateFromArray(output.state);
+                    if (!stateData) continue;
+                    
+                    const txid = txpow.txpowid || '';
+                    
+                    const alreadyProcessed = await isTxProcessed(txid);
+                    if (alreadyProcessed) continue;
+                    
+                    const existsInMem = currentMessages.find(m => m.txid === txid);
+                    if (existsInMem) {
+                        await markTxProcessed(txid);
+                        continue;
+                    }
+                    
+                    console.log('Recovery: found state[99] in txpow:', txid.substring(0, 20));
+                    
+                    const coin = {
+                        txid: txid,
+                        coinid: output.coinid || txid,
+                        state: stateData
+                    };
+                    
+                    await markTxProcessed(txid);
+                    
+                    await new Promise((resolve) => {
+                        decryptMessage(stateData).then((decrypted) => {
+                            if (!decrypted) {
+                                console.log('Recovery: could not decrypt txpow state[99], skipping');
+                                resolve();
+                                return;
+                            }
+                            
+                            const isBuyerReply = decrypted.type === 'BUYER_REPLY';
+                            
+                            const message = {
+                                id: Date.now().toString() + '_' + Math.random(),
+                                ref: decrypted.ref || 'Unknown-' + Date.now(),
+                                type: decrypted.type || 'ORDER',
+                                product: decrypted.product || (isBuyerReply ? decrypted.originalOrder : 'Unknown Product'),
+                                size: decrypted.size || '',
+                                amount: decrypted.amount || '0',
+                                currency: decrypted.currency || 'USDT',
+                                delivery: decrypted.delivery || (isBuyerReply ? decrypted.message : ''),
+                                message: decrypted.message || '',
+                                shipping: decrypted.shipping || 'uk',
+                                timestamp: decrypted.timestamp || Date.now(),
+                                txid: txid,
+                                read: false,
+                                buyerPublicKey: decrypted.buyerPublicKey || decrypted._senderPublicKey || '',
+                                buyerAddress: decrypted.buyerAddress || ''
+                            };
+                            
+                            if (message.buyerPublicKey || message.buyerAddress) {
+                                saveProcessedAddress(message.buyerAddress, message.buyerPublicKey);
+                            }
+                            
+                            addMessage(message);
+                            totalRecovered++;
+                            resolve();
+                        });
+                    });
+                }
+            }
+            
+            hasMore = txpows.length === MAX_BATCH;
+            offset += MAX_BATCH;
+            
+        } catch (err) {
+            console.error('txpow recovery error:', err);
+            break;
+        }
+    }
+    
+    if (totalRecovered > 0) {
+        console.log(`Chain recovery complete: ${totalRecovered} orders recovered`);
+    }
+}
 
 function decodeObfuscated(str, salt) {
     const decoded = atob(str);
@@ -131,40 +420,33 @@ function encryptMessage(publicKey, data) {
     });
 }
 
-function saveMessages(messages) {
-    const data = JSON.stringify(messages);
-    if (typeof MDS !== 'undefined') {
-        MDS.file.save(MESSAGES_STORAGE_KEY, data);
-    } else {
-        localStorage.setItem(MESSAGES_STORAGE_KEY, data);
+async function saveMessages(messages) {
+    if (!mdsSqlWorking) {
+        localStorage.setItem('mishop_inbox_messages', JSON.stringify(messages));
+        console.log('saveMessages: using localStorage (mdsSqlWorking=false)');
+        return;
+    }
+    try {
+        await MDS.sql(`DELETE FROM messages`);
+        for (const m of messages) {
+            await saveMessageToDb(m);
+        }
+        console.log('saveMessages: saved', messages.length, 'messages to SQL');
+    } catch (err) {
+        console.error('saveMessages error:', err, '- falling back to localStorage');
+        localStorage.setItem('mishop_inbox_messages', JSON.stringify(messages));
     }
 }
 
-function loadMessages() {
-    return new Promise((resolve) => {
-        if (typeof MDS !== 'undefined') {
-            MDS.file.load(MESSAGES_STORAGE_KEY, (response) => {
-                if (response.status && response.response) {
-                    try {
-                        const msgs = JSON.parse(response.response);
-                        console.log('LOAD MESSAGES: From MDS storage, loaded', msgs.length, 'messages');
-                        resolve(msgs);
-                    } catch (e) {
-                        console.log('LOAD MESSAGES: Parse error, returning empty');
-                        resolve([]);
-                    }
-                } else {
-                    console.log('LOAD MESSAGES: No data in MDS storage');
-                    resolve([]);
-                }
-            });
-        } else {
-            const data = localStorage.getItem(MESSAGES_STORAGE_KEY);
-            const msgs = data ? JSON.parse(data) : [];
-            console.log('LOAD MESSAGES: From localStorage, loaded', msgs.length, 'messages');
-            resolve(msgs);
-        }
-    });
+async function loadMessages() {
+    if (!mdsSqlWorking) {
+        const data = localStorage.getItem('mishop_inbox_messages');
+        console.log('loadMessages: using localStorage, found:', data ? 'data' : 'empty');
+        return data ? JSON.parse(data) : [];
+    }
+    const msgs = await loadMessagesFromDb();
+    console.log('loadMessages: loaded', msgs.length, 'messages from SQL');
+    return msgs;
 }
 
 function addMessage(message) {
@@ -205,58 +487,73 @@ function processIncomingMessage(coin) {
         return;
     }
     
-    let stateData = getState99Data(coin.state);
+    const coinTxid = coin.txid || coin.txnid || coin.coinid || '';
     
-    if (!stateData) {
-        if (coin.state && coin.state[99]) {
-            stateData = coin.state[99];
-        } else {
-            console.log('Coin has no state[99] - not a message');
+    isTxProcessed(coinTxid).then(alreadyProcessed => {
+        if (alreadyProcessed) {
+            console.log('TX already processed, skipping:', coinTxid.substring(0, 20));
             return;
         }
-    }
-    
-    console.log('Processing incoming message, coin:', coin.coinid || coin.txid);
-    console.log('Found state[99] data, length:', stateData.length);
-    
-    decryptMessage(stateData).then((decrypted) => {
-        if (decrypted) {
-            console.log('Decrypted message:', JSON.stringify(decrypted));
-            
-            const isBuyerReply = decrypted.type === 'BUYER_REPLY';
-            
-            const message = {
-                id: Date.now().toString(),
-                ref: decrypted.ref || 'Unknown-' + Date.now(),
-                type: decrypted.type || 'ORDER',
-                product: decrypted.product || (isBuyerReply ? decrypted.originalOrder : 'Unknown Product'),
-                size: decrypted.size || '',
-                amount: decrypted.amount || '0',
-                currency: decrypted.currency || 'USDT',
-                delivery: decrypted.delivery || (isBuyerReply ? decrypted.message : ''),
-                message: decrypted.message || '',
-                shipping: decrypted.shipping || 'uk',
-                timestamp: decrypted.timestamp || Date.now(),
-                txid: coin.txid || coin.txnid || coin.coinid || '',
-                read: false,
-                buyerPublicKey: decrypted.buyerPublicKey || decrypted._senderPublicKey || '',
-                buyerAddress: decrypted.buyerAddress || ''
-            };
-            
-            addMessage(message);
-            
-            console.log('=== ' + (isBuyerReply ? 'BUYER REPLY RECEIVED' : 'ORDER RECEIVED') + ' ===');
-            console.log('Message ref:', decrypted.ref);
-            console.log('Product:', decrypted.product || decrypted.originalOrder);
-            console.log('Buyer info stored:', {
-                publicKey: message.buyerPublicKey ? 'YES' : 'MISSING',
-                publicKeyValue: message.buyerPublicKey || 'N/A',
-                address: message.buyerAddress ? 'YES' : 'MISSING',
-                addressValue: message.buyerAddress || 'N/A'
-            });
-        } else {
-            console.log('Could not decrypt message (not for us)');
+        
+        let stateData = getState99Data(coin.state);
+        
+        if (!stateData) {
+            if (coin.state && coin.state[99]) {
+                stateData = coin.state[99];
+            } else {
+                console.log('Coin has no state[99] - not a message');
+                return;
+            }
         }
+        
+        console.log('Processing incoming message, coin:', coin.coinid || coin.txid);
+        console.log('Found state[99] data, length:', stateData.length);
+        
+        markTxProcessed(coinTxid);
+        
+        decryptMessage(stateData).then((decrypted) => {
+            if (decrypted) {
+                console.log('Decrypted message:', JSON.stringify(decrypted));
+                
+                const isBuyerReply = decrypted.type === 'BUYER_REPLY';
+                
+                const message = {
+                    id: Date.now().toString(),
+                    ref: decrypted.ref || 'Unknown-' + Date.now(),
+                    type: decrypted.type || 'ORDER',
+                    product: decrypted.product || (isBuyerReply ? decrypted.originalOrder : 'Unknown Product'),
+                    size: decrypted.size || '',
+                    amount: decrypted.amount || '0',
+                    currency: decrypted.currency || 'USDT',
+                    delivery: decrypted.delivery || (isBuyerReply ? decrypted.message : ''),
+                    message: decrypted.message || '',
+                    shipping: decrypted.shipping || 'uk',
+                    timestamp: decrypted.timestamp || Date.now(),
+                    txid: coinTxid,
+                    read: false,
+                    buyerPublicKey: decrypted.buyerPublicKey || decrypted._senderPublicKey || '',
+                    buyerAddress: decrypted.buyerAddress || ''
+                };
+                
+                if (message.buyerPublicKey || message.buyerAddress) {
+                    saveProcessedAddress(message.buyerAddress, message.buyerPublicKey);
+                }
+                
+                addMessage(message);
+                
+                console.log('=== ' + (isBuyerReply ? 'BUYER REPLY RECEIVED' : 'ORDER RECEIVED') + ' ===');
+                console.log('Message ref:', decrypted.ref);
+                console.log('Product:', decrypted.product || decrypted.originalOrder);
+                console.log('Buyer info stored:', {
+                    publicKey: message.buyerPublicKey ? 'YES' : 'MISSING',
+                    publicKeyValue: message.buyerPublicKey || 'N/A',
+                    address: message.buyerAddress ? 'YES' : 'MISSING',
+                    addressValue: message.buyerAddress || 'N/A'
+                });
+            } else {
+                console.log('Could not decrypt message (not for us)');
+            }
+        });
     });
 }
 
@@ -313,8 +610,11 @@ function checkForNewCoins() {
                     if (stateData) {
                         messageCoins++;
                         console.log('*** HAS STATE[99]! ***');
-                        const exists = currentMessages.find(m => m.txid === (coin.txid || coin.coinid));
-                        if (!exists) {
+                        const coinTxid = coin.txid || coin.coinid || '';
+                        const existsInMem = currentMessages.find(m => m.txid === coinTxid);
+                        if (existsInMem) {
+                            console.log('Already in currentMessages, skipping:', coinTxid.substring(0, 20));
+                        } else {
                             console.log('FOUND MESSAGE COIN!');
                             processIncomingMessage(coin);
                         }
@@ -762,10 +1062,13 @@ MDS.init(async (msg) => {
     if (msg.event === 'inited') {
         console.log('MDS initialized, setting up inbox...');
         
+        await initDB();
         currentMessages = await loadMessages();
         renderInbox();
         setupEventListeners();
         initInbox();
+        
+        setTimeout(() => recoverFromChain(), 3000);
         
     } else if (msg.event === 'NOTIFYCOIN') {
         console.log('NOTIFYCOIN event:', JSON.stringify(msg.data));

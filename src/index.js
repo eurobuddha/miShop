@@ -68,6 +68,9 @@ const PRODUCT = {
     maxUnits: ${product.maxUnits || 10},
     image: "item.jpg",
     sizes: ${JSON.stringify(sizes, null, 4).replace(/\n/g, '\n    ')},
+    rebroadcastDelayHours: ${product.rebroadcastDelayHours || 2},
+    rebroadcastMaxIntervalHours: ${product.rebroadcastMaxIntervalHours || 24},
+    firstRebroadcastDelayHours: ${product.firstRebroadcastDelayHours || 2},
     created: "${new Date().toISOString()}"
 };
 
@@ -446,7 +449,9 @@ async function runGenerate(options) {
         pricePerUnit: mode === 'units' ? parseFloat(options.price) : 0,
         weight: mode === 'weight' ? parseFloat(options.weight) : 0,
         maxUnits: mode === 'units' ? parseInt(options.units) : 10,
-        description: options.desc || 'Premium product'
+        description: options.desc || 'Premium product',
+        firstRebroadcastDelayHours: options.rebroadcastDelay || 2,
+        rebroadcastMaxIntervalHours: options.maxRebroadcast || 24
     };
 
     const priceLabel = mode === 'units' ? 'per unit' : 'per gram';
@@ -507,7 +512,9 @@ async function main() {
             .option('-u, --units <units>', 'Max units per "full" (units mode)', parseInt)
             .option('-d, --desc <description>', 'Product description')
             .option('-i, --image <path>', 'Path to product image')
-            .option('--inbox-only', 'Generate only the inbox MiniDapp');
+            .option('--inbox-only', 'Generate only the inbox MiniDapp')
+            .option('--rebroadcast-delay <hours>', 'Hours before first rebroadcast attempt', parseInt, 2)
+            .option('--max-rebroadcast <hours>', 'Max hours between rebroadcast attempts', parseInt, 24);
         program.parse(process.argv);
         await runGenerate(program.opts());
         return;
@@ -535,6 +542,8 @@ async function main() {
         .option('-d, --desc <description>', 'Product description')
         .option('-i, --image <path>', 'Path to product image')
         .option('--inbox-only', 'Generate only the inbox MiniDapp')
+        .option('--rebroadcast-delay <hours>', 'Hours before first rebroadcast attempt', parseInt, 2)
+        .option('--max-rebroadcast <hours>', 'Max hours between rebroadcast attempts', parseInt, 24)
         .action(async (opts) => await runGenerate(opts));
 
     program

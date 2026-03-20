@@ -3,14 +3,22 @@ const TOKEN_IDS = {
     MINIMA: '0x00'
 };
 
-const PRICE_STORAGE_KEY = 'minima_last_price';
-const MESSAGES_STORAGE_KEY = 'mishop_messages';
-const BUYER_ADDRESS_STORAGE_KEY = 'mishop_buyer_address';
 const DEFAULT_MINIMA_PRICE = 0.004;
+
+const SHIPPING_RATES = {
+    uk: 5,
+    intl: 20,
+    digital: 0
+};
 
 const OBFUSCATED_CMC_KEY = '';
 const CMC_KEY_SALT = '';
+const PRICE_STORAGE_KEY = 'minima_last_price';
+const MESSAGES_STORAGE_KEY = 'mishop_messages';
+const BUYER_ADDRESS_STORAGE_KEY = 'mishop_buyer_address';
 
+let dbReady = false;
+let mdsSqlWorking = false;
 let selectedSize = 'eighth';
 let selectedQuantity = 1;
 let selectedPaymentMethod = 'USDT';
@@ -28,11 +36,198 @@ let currentMessages = [];
 let buyerInboxAddress = null;
 let replyPollingInterval = null;
 
-const SHIPPING_RATES = {
-    uk: 5,
-    intl: 20,
-    digital: 0
-};
+function escapeSQL(val) {
+    if (val == null) return 'NULL';
+    return "'" + String(val).replace(/'/g, "''") + "'";
+}
+
+async function initDB() {
+    if (dbReady) return;
+    try {
+        await MDS.sql(
+            `CREATE TABLE IF NOT EXISTS messages (` +
+            `id INTEGER PRIMARY KEY AUTOINCREMENT,` +
+            `ref TEXT, type TEXT, product TEXT, size TEXT,` +
+            `amount TEXT, currency TEXT, delivery TEXT, shipping TEXT,` +
+            `message TEXT, timestamp INTEGER, txid TEXT,` +
+            `read INTEGER, direction TEXT,` +
+            `buyerPublicKey TEXT, buyerAddress TEXT,` +
+            `vendorPublicKey TEXT, vendorAddress TEXT,` +
+            `UNIQUE(ref, txid))`
+        );
+        await MDS.sql(
+            `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`
+        );
+        await MDS.sql(
+            `CREATE TABLE IF NOT EXISTS sent_orders (` +
+            `ref TEXT PRIMARY KEY, product TEXT, size TEXT,` +
+            `amount TEXT, currency TEXT, delivery TEXT, shipping TEXT,` +
+            `encrypted_data TEXT, sent_at INTEGER,` +
+            `acknowledged INTEGER DEFAULT 0,` +
+            `rebroadcast_count INTEGER DEFAULT 0,` +
+            `last_rebroadcast INTEGER)`
+        );
+        dbReady = true;
+        mdsSqlWorking = true;
+        console.log('DB initialized successfully, mdsSqlWorking = true');
+    } catch (err) {
+        dbReady = true;
+        console.error('DB init error:', err);
+    }
+}
+
+async function saveSetting(key, value) {
+    if (!mdsSqlWorking) {
+        localStorage.setItem('mishop_' + key, value);
+        return;
+    }
+    try {
+        await MDS.sql(`INSERT OR REPLACE INTO settings (key, value) VALUES (${escapeSQL(key)}, ${escapeSQL(value)})`);
+    } catch (err) {
+        console.error('saveSetting error:', err);
+    }
+}
+
+async function loadSetting(key) {
+    if (!mdsSqlWorking) {
+        return localStorage.getItem('mishop_' + key);
+    }
+    try {
+        const resp = await MDS.sql(`SELECT value FROM settings WHERE key = ${escapeSQL(key)}`);
+        if (resp && resp.status && resp.rows && resp.rows.length > 0) {
+            return resp.rows[0].value;
+        }
+    } catch (err) {
+        console.error('loadSetting error:', err);
+    }
+    return null;
+}
+
+async function saveMessageToDb(message) {
+    if (typeof MDS === 'undefined') return;
+    try {
+        await MDS.sql(
+            `INSERT OR REPLACE INTO messages ` +
+            `(ref, type, product, size, amount, currency, delivery, shipping, message, ` +
+            `timestamp, txid, read, direction, buyerPublicKey, buyerAddress, vendorPublicKey, vendorAddress) ` +
+            `VALUES (` +
+            `${escapeSQL(message.ref || '')}, ${escapeSQL(message.type || 'ORDER')}, ` +
+            `${escapeSQL(message.product || '')}, ${escapeSQL(message.size || '')}, ` +
+            `${escapeSQL(message.amount || '')}, ${escapeSQL(message.currency || '')}, ` +
+            `${escapeSQL(message.delivery || '')}, ${escapeSQL(message.shipping || '')}, ` +
+            `${escapeSQL(message.message || '')}, ${message.timestamp || Date.now()}, ` +
+            `${escapeSQL(message.txid || '')}, ${message.read ? 1 : 0}, ` +
+            `${escapeSQL(message.direction || 'sent')}, ` +
+            `${escapeSQL(message.buyerPublicKey || '')}, ${escapeSQL(message.buyerAddress || '')}, ` +
+            `${escapeSQL(message.vendorPublicKey || '')}, ${escapeSQL(message.vendorAddress || '')})`
+        );
+    } catch (err) {
+        console.error('saveMessageToDb error:', err);
+    }
+}
+
+async function loadMessagesFromDb() {
+    if (typeof MDS === 'undefined') {
+        const data = localStorage.getItem('mishop_messages');
+        return data ? JSON.parse(data) : [];
+    }
+    try {
+        const resp = await MDS.sql(`SELECT * FROM messages ORDER BY timestamp DESC`);
+        if (resp && resp.status && resp.rows) {
+            return resp.rows.map(row => ({
+                id: row.id,
+                ref: row.ref,
+                type: row.type,
+                product: row.product,
+                size: row.size,
+                amount: row.amount,
+                currency: row.currency,
+                delivery: row.delivery,
+                shipping: row.shipping,
+                message: row.message,
+                timestamp: row.timestamp,
+                txid: row.txid,
+                read: !!row.read,
+                direction: row.direction,
+                buyerPublicKey: row.buyerPublicKey,
+                buyerAddress: row.buyerAddress,
+                vendorPublicKey: row.vendorPublicKey,
+                vendorAddress: row.vendorAddress
+            }));
+        }
+    } catch (err) {
+        console.error('loadMessagesFromDb error:', err);
+    }
+    return [];
+}
+
+async function saveSentOrder(order) {
+    if (typeof MDS === 'undefined') return;
+    try {
+        await MDS.sql(
+            `INSERT OR REPLACE INTO sent_orders ` +
+            `(ref, product, size, amount, currency, delivery, shipping, encrypted_data, ` +
+            `sent_at, acknowledged, rebroadcast_count, last_rebroadcast) ` +
+            `VALUES (` +
+            `${escapeSQL(order.ref || '')}, ${escapeSQL(order.product || '')}, ` +
+            `${escapeSQL(order.size || '')}, ${escapeSQL(order.amount || '')}, ` +
+            `${escapeSQL(order.currency || '')}, ${escapeSQL(order.delivery || '')}, ` +
+            `${escapeSQL(order.shipping || '')}, ${escapeSQL(order.encrypted_data || '')}, ` +
+            `${order.sent_at || Date.now()}, ${order.acknowledged ? 1 : 0}, ` +
+            `${order.rebroadcast_count || 0}, ` +
+            `${order.last_rebroadcast != null ? order.last_rebroadcast : 'NULL'})`
+        );
+    } catch (err) {
+        console.error('saveSentOrder error:', err);
+    }
+}
+
+async function loadUnacknowledgedOrders() {
+    if (typeof MDS === 'undefined') return [];
+    try {
+        const resp = await MDS.sql(`SELECT * FROM sent_orders WHERE acknowledged = 0 ORDER BY sent_at ASC`);
+        if (resp && resp.status && resp.rows) {
+            return resp.rows.map(row => ({
+                ref: row.ref,
+                product: row.product,
+                size: row.size,
+                amount: row.amount,
+                currency: row.currency,
+                delivery: row.delivery,
+                shipping: row.shipping,
+                encrypted_data: row.encrypted_data,
+                sent_at: row.sent_at,
+                acknowledged: !!row.acknowledged,
+                rebroadcast_count: row.rebroadcast_count,
+                last_rebroadcast: row.last_rebroadcast
+            }));
+        }
+    } catch (err) {
+        console.error('loadUnacknowledgedOrders error:', err);
+    }
+    return [];
+}
+
+async function acknowledgeOrder(ref) {
+    if (typeof MDS === 'undefined') return;
+    try {
+        await MDS.sql(`UPDATE sent_orders SET acknowledged = 1 WHERE ref = ${escapeSQL(ref)}`);
+    } catch (err) {
+        console.error('acknowledgeOrder error:', err);
+    }
+}
+
+async function updateRebroadcastCount(ref) {
+    if (typeof MDS === 'undefined') return;
+    try {
+        await MDS.sql(
+            `UPDATE sent_orders SET rebroadcast_count = rebroadcast_count + 1, ` +
+            `last_rebroadcast = ${Date.now()} WHERE ref = ${escapeSQL(ref)}`
+        );
+    } catch (err) {
+        console.error('updateRebroadcastCount error:', err);
+    }
+}
 
 function decodeObfuscated(str, salt) {
     const decoded = atob(str);
@@ -146,34 +341,33 @@ function getState99Data(state) {
     return null;
 }
 
-function saveMessages(messages) {
-    const data = JSON.stringify(messages);
-    if (typeof MDS !== 'undefined') {
-        MDS.file.save(MESSAGES_STORAGE_KEY, data);
-    } else {
-        localStorage.setItem(MESSAGES_STORAGE_KEY, data);
+async function saveMessages(messages) {
+    if (!mdsSqlWorking) {
+        localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(messages));
+        console.log('saveMessages: using localStorage (mdsSqlWorking=false)');
+        return;
+    }
+    try {
+        await MDS.sql(`DELETE FROM messages`);
+        for (const m of messages) {
+            await saveMessageToDb(m);
+        }
+        console.log('saveMessages: saved', messages.length, 'messages to SQL');
+    } catch (err) {
+        console.error('saveMessages error:', err, '- falling back to localStorage');
+        localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(messages));
     }
 }
 
-function loadMessages() {
-    return new Promise((resolve) => {
-        if (typeof MDS !== 'undefined') {
-            MDS.file.load(MESSAGES_STORAGE_KEY, (response) => {
-                if (response.status && response.response) {
-                    try {
-                        resolve(JSON.parse(response.response));
-                    } catch (e) {
-                        resolve([]);
-                    }
-                } else {
-                    resolve([]);
-                }
-            });
-        } else {
-            const data = localStorage.getItem(MESSAGES_STORAGE_KEY);
-            resolve(data ? JSON.parse(data) : []);
-        }
-    });
+async function loadMessages() {
+    if (!mdsSqlWorking) {
+        const data = localStorage.getItem(MESSAGES_STORAGE_KEY);
+        console.log('loadMessages: using localStorage, found:', data ? 'data' : 'empty');
+        return data ? JSON.parse(data) : [];
+    }
+    const msgs = await loadMessagesFromDb();
+    console.log('loadMessages: loaded', msgs.length, 'messages from SQL');
+    return msgs;
 }
 
 function addMessage(message) {
@@ -315,37 +509,17 @@ function getMyAddress(callback) {
     });
 }
 
-function saveBuyerAddress(address) {
+async function saveBuyerAddress(address) {
     if (!address) return;
-    if (typeof MDS !== 'undefined') {
-        MDS.file.save(BUYER_ADDRESS_STORAGE_KEY, address);
-    } else {
-        localStorage.setItem(BUYER_ADDRESS_STORAGE_KEY, address);
-    }
+    await saveSetting('buyer_address', address);
 }
 
-function loadBuyerAddress() {
-    return new Promise((resolve) => {
-        if (typeof MDS !== 'undefined') {
-            MDS.file.load(BUYER_ADDRESS_STORAGE_KEY, (response) => {
-                if (response.status && response.response) {
-                    const address = String(response.response).trim();
-                    if (address && (address.startsWith('0x') || address.startsWith('Mx'))) {
-                        resolve(address);
-                        return;
-                    }
-                }
-                resolve(null);
-            });
-        } else {
-            const address = localStorage.getItem(BUYER_ADDRESS_STORAGE_KEY);
-            if (address && (address.startsWith('0x') || address.startsWith('Mx'))) {
-                resolve(address);
-                return;
-            }
-            resolve(null);
-        }
-    });
+async function loadBuyerAddress() {
+    const address = await loadSetting('buyer_address');
+    if (address && (address.startsWith('0x') || address.startsWith('Mx'))) {
+        return address;
+    }
+    return null;
 }
 
 function getFreshBuyerAddress() {
@@ -434,6 +608,10 @@ function processReplyMessage(coin) {
             
             addMessage(message);
             
+            if (decrypted.ref) {
+                acknowledgeOrder(decrypted.ref);
+            }
+            
             if (typeof MDS !== 'undefined') {
                 MDS.notify('New reply: ' + (decrypted.ref || 'Order'));
             }
@@ -441,6 +619,105 @@ function processReplyMessage(coin) {
             console.log('Could not decrypt reply (might not be for us)');
         }
     });
+}
+
+function getStateFromArray(stateArr) {
+    if (!stateArr || !Array.isArray(stateArr)) return null;
+    for (const s of stateArr) {
+        if (s && s.port === 99 && s.data) return s.data;
+    }
+    return null;
+}
+
+async function recoverRepliesFromChain() {
+    if (!buyerInboxAddress) return;
+    
+    console.log('=== RECOVERING REPLIES FROM CHAIN HISTORY ===');
+    
+    try {
+        const cmd = `txpow address:${buyerInboxAddress} max:500`;
+        const result = await new Promise((resolve) => {
+            MDS.cmd(cmd, resolve);
+        });
+        
+        if (!result || !result.status || !result.response) {
+            console.log('Reply recovery: no response');
+            return;
+        }
+        
+        const txpows = result.response;
+        if (!Array.isArray(txpows)) return;
+        
+        console.log(`Reply recovery: checking ${txpows.length} txpows`);
+        
+        let recovered = 0;
+        for (const txpow of txpows) {
+            if (!txpow || !txpow.hasbody) continue;
+            const body = txpow.body;
+            if (!body || !body.txn) continue;
+            
+            const txn = body.txn;
+            const outputs = txn.outputs || [];
+            
+            for (const output of outputs) {
+                if (!output || !output.storestate) continue;
+                
+                const stateData = getStateFromArray(output.state);
+                if (!stateData) continue;
+                
+                const txid = txpow.txpowid || '';
+                const exists = currentMessages.find(m => m.txid === txid);
+                if (exists) continue;
+                
+                console.log('Reply recovery: found state[99] in txpow:', txid.substring(0, 20));
+                
+                await new Promise((resolve) => {
+                    decryptMessage(stateData).then((decrypted) => {
+                        if (!decrypted) {
+                            resolve();
+                            return;
+                        }
+                        
+                        if (decrypted.type !== 'REPLY') {
+                            resolve();
+                            return;
+                        }
+                        
+                        const message = {
+                            id: Date.now().toString() + '_' + Math.random(),
+                            ref: decrypted.ref || 'REPLY-' + Date.now(),
+                            type: 'REPLY',
+                            subject: 'Reply: ' + (decrypted.ref || 'Order'),
+                            product: decrypted.originalOrder || '',
+                            message: decrypted.message || '',
+                            timestamp: decrypted.timestamp || Date.now(),
+                            txid: txid,
+                            read: false,
+                            direction: 'received',
+                            vendorPublicKey: decrypted.vendorPublicKey || decrypted._senderPublicKey || null,
+                            vendorAddress: decrypted.vendorAddress || null
+                        };
+                        
+                        addMessage(message);
+                        
+                        if (decrypted.ref) {
+                            acknowledgeOrder(decrypted.ref);
+                        }
+                        
+                        recovered++;
+                        resolve();
+                    });
+                });
+            }
+        }
+        
+        if (recovered > 0) {
+            console.log(`Reply chain recovery complete: ${recovered} replies recovered`);
+        }
+        
+    } catch (err) {
+        console.error('Reply recovery error:', err);
+    }
 }
 
 function startReplyPolling() {
@@ -477,33 +754,66 @@ function startReplyPolling() {
                 }
             }
         });
+        
+        checkForUnacknowledgedOrders();
     }, 15000);
 }
 
-async function saveLastPrice(price) {
-    if (typeof MDS !== 'undefined') {
-        MDS.file.save(PRICE_STORAGE_KEY, price.toString());
+let rebroadcastInterval = null;
+
+async function checkForUnacknowledgedOrders() {
+    if (!vendorAddress || !vendorPublicKey) return;
+    
+    const unacked = await loadUnacknowledgedOrders();
+    if (unacked.length === 0) return;
+    
+    const firstDelay = (PRODUCT.firstRebroadcastDelayHours || 2) * 60 * 60 * 1000;
+    const maxInterval = (PRODUCT.rebroadcastMaxIntervalHours || 24) * 60 * 60 * 1000;
+    const now = Date.now();
+    
+    for (const order of unacked) {
+        const age = now - order.sent_at;
+        const lastRebroadcastAgo = order.last_rebroadcast ? now - order.last_rebroadcast : Infinity;
+        const minInterval = Math.min(Math.pow(2, order.rebroadcast_count) * firstDelay, maxInterval);
+        
+        if (age >= firstDelay && lastRebroadcastAgo >= minInterval) {
+            console.log('Rebroadcasting unacknowledged order:', order.ref);
+            await rebroadcastOrder(order);
+        }
     }
 }
 
-async function loadLastPrice() {
-    return new Promise((resolve) => {
-        if (typeof MDS !== 'undefined') {
-            MDS.file.load(PRICE_STORAGE_KEY, (response) => {
-                if (response.status && response.response) {
-                    const price = parseFloat(response.response);
-                    if (price > 0) {
-                        resolve(price);
-                        return;
-                    }
-                }
-                resolve(DEFAULT_MINIMA_PRICE);
-            });
-        } else {
-            const saved = localStorage.getItem(PRICE_STORAGE_KEY);
-            resolve(saved ? parseFloat(saved) : DEFAULT_MINIMA_PRICE);
+async function rebroadcastOrder(order) {
+    try {
+        if (!order.encrypted_data) {
+            console.log('No encrypted data for order:', order.ref);
+            return;
         }
-    });
+        
+        const state = {};
+        state[99] = order.encrypted_data;
+        const command = 'send address:' + vendorAddress + ' amount:0.0001 tokenid:' + TOKEN_IDS.MINIMA + ' state:' + JSON.stringify(state);
+        
+        MDS.cmd(command, (response) => {
+            if (response && response.status) {
+                console.log('Rebroadcast successful for:', order.ref, 'txid:', response.response?.txnid);
+                updateRebroadcastCount(order.ref);
+            } else {
+                console.log('Rebroadcast failed for:', order.ref, response?.error);
+            }
+        });
+    } catch (error) {
+        console.error('Rebroadcast error for', order.ref, ':', error);
+    }
+}
+
+async function saveLastPrice(price) {
+    await saveSetting('last_price', price.toString());
+}
+
+async function loadLastPrice() {
+    const saved = await loadSetting('last_price');
+    return saved ? parseFloat(saved) : DEFAULT_MINIMA_PRICE;
 }
 
 function initApp() {
@@ -1140,6 +1450,21 @@ async function processPayment() {
                             buyerAddress: buyerAddress || buyerInfo.buyerAddress || buyerInboxAddress || ''
                         });
                         
+                        saveSentOrder({
+                            ref: lastOrderReference,
+                            product: PRODUCT.name,
+                            size: sizeLabel,
+                            amount: totalPrice.toFixed(2),
+                            currency: tokenName,
+                            delivery: deliveryInfo,
+                            shipping: selectedShipping,
+                            encrypted_data: encryptedFinal.encrypted,
+                            sent_at: Date.now(),
+                            acknowledged: false,
+                            rebroadcast_count: 0,
+                            last_rebroadcast: null
+                        });
+                        
                         showPaymentStatus('Sending payment...', 'pending');
                         
                         let payCommand;
@@ -1767,15 +2092,16 @@ MDS.init(async (msg) => {
     if (msg.event === 'inited') {
         console.log('MDS initialized');
         
+        if (!validateVendorAddress()) return;
+        
         if (typeof MDS !== 'undefined') {
             MDS.cmd('coinnotify action:add address:' + vendorAddress, function(resp) {
                 console.log('Coin notify registered for vendor:', resp);
             });
         }
         
+        await initDB();
         currentMessages = await loadMessages();
-        
-        if (!validateVendorAddress()) return;
         
         setupNavigation();
         renderShop();
@@ -1798,7 +2124,10 @@ MDS.init(async (msg) => {
             }
 
             startReplyPolling();
+            setTimeout(() => recoverRepliesFromChain(), 5000);
         }
+        
+        setTimeout(() => checkForUnacknowledgedOrders(), 5000);
         
         const loadingIndicator = document.getElementById('loading-indicator');
         if (loadingIndicator) loadingIndicator.classList.remove('hidden');
