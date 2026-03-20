@@ -479,14 +479,83 @@ async function loadMessages() {
     try {
         const msgs = JSON.parse(data);
         if (!Array.isArray(msgs)) {
-            console.error('loadMessages: file data is not an array (' + typeof msgs + '), returning empty (will rebuild from chain)');
-            return [];
+            console.error('loadMessages: file data is not an array (' + typeof msgs + '), rebuilding from chain');
+            return recoverMessagesFromChain();
         }
         console.log('loadMessages: loaded', msgs.length, 'messages from file');
         return msgs;
     } catch (e) {
-        console.error('loadMessages: parse error, returning empty (will rebuild from chain):', e);
-        return [];
+        console.error('loadMessages: parse error, rebuilding from chain:', e);
+        return recoverMessagesFromChain();
+    }
+}
+
+async function recoverMessagesFromChain() {
+    console.log('=== INBOX: RECOVERING MESSAGES FROM CHAIN ===');
+    
+    try {
+        const result = await new Promise((resolve) => {
+            MDS.cmd('coins address:' + myAddress, resolve);
+        });
+        
+        if (!result || !result.status || !Array.isArray(result.response)) {
+            console.log('Inbox recovery: no UTXOs found');
+            return [];
+        }
+        
+        console.log('Inbox recovery: checking', result.response.length, 'UTXOs');
+        
+        const recovered = [];
+        for (const coin of result.response) {
+            const coinTxid = coin.txid || coin.txnid || coin.coinid || '';
+            const exists = recovered.find(m => m.txid === coinTxid);
+            if (exists) continue;
+            
+            const stateData = getState99Data(coin.state);
+            if (!stateData) continue;
+            
+            const decrypted = await new Promise((resolve) => {
+                decryptMessage(stateData).then(resolve);
+            });
+            
+            if (!decrypted) continue;
+            
+            const isBuyerReply = decrypted.type === 'BUYER_REPLY';
+            
+            const message = {
+                id: Date.now().toString() + '_' + Math.random(),
+                ref: decrypted.ref || 'Unknown-' + Date.now(),
+                type: decrypted.type || 'ORDER',
+                product: decrypted.product || (isBuyerReply ? decrypted.originalOrder : 'Unknown Product'),
+                size: decrypted.size || '',
+                amount: decrypted.amount || '0',
+                currency: decrypted.currency || 'USDT',
+                delivery: decrypted.delivery || (isBuyerReply ? decrypted.message : ''),
+                message: decrypted.message || '',
+                shipping: decrypted.shipping || 'uk',
+                timestamp: decrypted.timestamp || Date.now(),
+                txid: coinTxid,
+                read: false,
+                buyerPublicKey: decrypted.buyerPublicKey || decrypted._senderPublicKey || '',
+                buyerAddress: decrypted.buyerAddress || ''
+            };
+            
+            await markTxProcessed(coinTxid);
+            recovered.push(message);
+            currentMessages.push(message);
+        }
+        
+        if (recovered.length > 0) {
+            console.log('Inbox recovery: found', recovered.length, 'messages from chain');
+            currentMessages.sort((a, b) => b.timestamp - a.timestamp);
+            await saveMessages(currentMessages);
+            renderInbox();
+        }
+        
+        return currentMessages;
+    } catch (e) {
+        console.error('Inbox recovery error:', e);
+        return currentMessages;
     }
 }
 

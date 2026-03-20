@@ -16,6 +16,7 @@ const CMC_KEY_SALT = '';
 const PRICE_STORAGE_KEY = 'minima_last_price';
 const MESSAGES_STORAGE_KEY = 'mishop_messages';
 const BUYER_ADDRESS_STORAGE_KEY = 'mishop_buyer_address';
+const BUYER_IDENTITY_KEY = 'mishop_buyer_identity';
 
 let dbReady = false;
 let mdsSqlWorking = false;
@@ -399,15 +400,99 @@ async function loadMessages() {
     try {
         const msgs = JSON.parse(data);
         if (!Array.isArray(msgs)) {
-            console.error('loadMessages: file data is not an array (' + typeof msgs + '), returning empty (will rebuild from chain)');
-            return [];
+            console.error('loadMessages: file data is not an array (' + typeof msgs + '), rebuilding from chain');
+            return recoverMessagesFromChain();
         }
         console.log('loadMessages: loaded', msgs.length, 'messages from file');
         return msgs;
     } catch (e) {
         console.error('loadMessages: parse error, returning empty (will rebuild from chain):', e);
-        return [];
+        return recoverMessagesFromChain();
     }
+}
+
+async function recoverMessagesFromChain() {
+    console.log('=== RECOVERING ALL MESSAGES FROM CHAIN ===');
+    const allMessages = [];
+    
+    const addresses = [];
+    if (vendorAddress) addresses.push({ addr: vendorAddress, label: 'vendor' });
+    if (buyerInboxAddress) addresses.push({ addr: buyerInboxAddress, label: 'buyer' });
+    
+    for (const { addr, label } of addresses) {
+        try {
+            const result = await new Promise((resolve) => {
+                MDS.cmd('coins address:' + addr, resolve);
+            });
+            
+            if (!result || !result.status || !Array.isArray(result.response)) continue;
+            
+            console.log(`Recover: checking ${result.response.length} UTXOs at ${label} address`);
+            
+            for (const coin of result.response) {
+                const coinTxid = coin.txid || coin.txnid || coin.coinid || '';
+                const stateData = getState99Data(coin.state);
+                if (!stateData) continue;
+                
+                try {
+                    const decrypted = await decryptMessage(stateData);
+                    if (!decrypted) continue;
+                    
+                    const isReply = decrypted.type === 'REPLY';
+                    
+                    const existing = allMessages.find(m => m.txid === coinTxid);
+                    if (existing) continue;
+                    
+                    if (isReply) {
+                        allMessages.push({
+                            id: Date.now().toString() + '_' + Math.random(),
+                            ref: decrypted.ref || 'REPLY-' + Date.now(),
+                            type: 'REPLY',
+                            subject: 'Reply: ' + (decrypted.ref || 'Order'),
+                            product: decrypted.originalOrder || '',
+                            message: decrypted.message || '',
+                            timestamp: decrypted.timestamp || Date.now(),
+                            txid: coinTxid,
+                            read: false,
+                            direction: 'received',
+                            vendorPublicKey: decrypted.vendorPublicKey || decrypted._senderPublicKey || null,
+                            vendorAddress: decrypted.vendorAddress || null
+                        });
+                    } else {
+                        allMessages.push({
+                            id: Date.now().toString() + '_' + Math.random(),
+                            ref: decrypted.ref || '',
+                            type: decrypted.type || 'ORDER',
+                            product: decrypted.product || '',
+                            size: decrypted.size || '',
+                            amount: decrypted.amount || '',
+                            currency: decrypted.currency || '',
+                            delivery: decrypted.delivery || '',
+                            shipping: decrypted.shipping || '',
+                            timestamp: decrypted.timestamp || Date.now(),
+                            txid: coinTxid,
+                            read: true,
+                            direction: 'sent'
+                        });
+                    }
+                } catch (e) {
+                    console.error('Recover: failed to process coin', coinTxid.substring(0, 20), e);
+                }
+            }
+        } catch (e) {
+            console.error('Recover: failed to query', label, 'address', e);
+        }
+    }
+    
+    console.log('Recover: found', allMessages.length, 'messages from chain');
+    
+    if (allMessages.length > 0) {
+        currentMessages = allMessages;
+        await saveMessages(currentMessages);
+        renderInbox();
+    }
+    
+    return allMessages;
 }
 
 function addMessage(message) {
@@ -562,6 +647,26 @@ async function loadBuyerAddress() {
     return null;
 }
 
+async function saveBuyerIdentity(address, publicKey) {
+    if (!address) return;
+    const identity = JSON.stringify({ address, publicKey: publicKey || null });
+    await saveFile(BUYER_IDENTITY_KEY, identity);
+}
+
+async function loadBuyerIdentity() {
+    const data = await loadFile(BUYER_IDENTITY_KEY);
+    if (!data || data === 'undefined') return null;
+    try {
+        const identity = JSON.parse(data);
+        if (identity && identity.address && (identity.address.startsWith('0x') || identity.address.startsWith('Mx'))) {
+            return identity;
+        }
+    } catch (e) {
+        console.error('loadBuyerIdentity: parse error', e);
+    }
+    return null;
+}
+
 function getFreshBuyerAddress() {
     return new Promise((resolve) => {
         getMyAddress((address) => {
@@ -574,6 +679,10 @@ function getFreshBuyerAddress() {
 }
 
 async function getOrCreateBuyerAddress() {
+    const savedIdentity = await loadBuyerIdentity();
+    if (savedIdentity && savedIdentity.address) {
+        return savedIdentity.address;
+    }
     const savedAddress = await loadBuyerAddress();
     if (savedAddress) {
         return savedAddress;
@@ -612,6 +721,39 @@ function processIncomingMessage(coin) {
             console.log('Could not decrypt message (might not be for us)');
         }
     });
+}
+
+async function checkVendorAddressForMessages() {
+    if (!vendorAddress) return;
+    
+    console.log('=== CHECKING VENDOR ADDRESS FOR INCOMING MESSAGES ===');
+    
+    try {
+        const result = await new Promise((resolve) => {
+            MDS.cmd('coins address:' + vendorAddress, resolve);
+        });
+        
+        if (!result || !result.status || !Array.isArray(result.response)) {
+            console.log('Vendor address check: no UTXOs found');
+            return;
+        }
+        
+        console.log('Vendor address check: found', result.response.length, 'UTXOs');
+        
+        for (const coin of result.response) {
+            const coinTxid = coin.txid || coin.txnid || coin.coinid || '';
+            const exists = currentMessages.find(m => m.txid === coinTxid);
+            if (exists) continue;
+            
+            const stateData = getState99Data(coin.state);
+            if (!stateData) continue;
+            
+            console.log('Vendor address: processing coin', coinTxid.substring(0, 20));
+            processIncomingMessage(coin);
+        }
+    } catch (e) {
+        console.error('Vendor address check error:', e);
+    }
 }
 
 function processReplyMessage(coin) {
@@ -1585,6 +1727,8 @@ async function processPayment() {
                             last_rebroadcast: null
                         });
                         
+                        saveBuyerIdentity(buyerAddress || buyerInboxAddress, buyerPublicKey);
+                        
                         showPaymentStatus('Sending payment...', 'pending');
                         
                         let payCommand;
@@ -2232,9 +2376,16 @@ MDS.init(async (msg) => {
         if (buyerInboxAddress) {
             console.log('Buyer inbox address:', buyerInboxAddress);
 
-            buyerPublicKey = await getMyPublicKey();
-            if (buyerPublicKey) {
-                console.log('Buyer public key set:', buyerPublicKey);
+            const savedIdentity = await loadBuyerIdentity();
+            if (savedIdentity && savedIdentity.publicKey) {
+                buyerPublicKey = savedIdentity.publicKey;
+                console.log('Buyer public key loaded from storage:', buyerPublicKey.substring(0, 20) + '...');
+            } else {
+                buyerPublicKey = await getMyPublicKey();
+                if (buyerPublicKey) {
+                    console.log('Buyer public key set:', buyerPublicKey);
+                    await saveBuyerIdentity(buyerInboxAddress, buyerPublicKey);
+                }
             }
 
             if (typeof MDS !== 'undefined') {
@@ -2245,6 +2396,7 @@ MDS.init(async (msg) => {
 
             startReplyPolling();
             setTimeout(() => recoverRepliesFromChain(), 5000);
+            setTimeout(() => checkVendorAddressForMessages(), 3000);
         }
         
         setTimeout(() => checkForUnacknowledgedOrders(), 5000);
@@ -2260,8 +2412,13 @@ MDS.init(async (msg) => {
         updatePrices();
         
     } else if (msg.event === 'NOTIFYCOIN') {
-        if (msg.data && buyerInboxAddress && msg.data.address === buyerInboxAddress) {
-            processReplyMessage(msg.data.coin);
+        if (msg.data) {
+            if (buyerInboxAddress && msg.data.address === buyerInboxAddress) {
+                processReplyMessage(msg.data.coin);
+            }
+            if (vendorAddress && msg.data.address === vendorAddress) {
+                processIncomingMessage(msg.data.coin);
+            }
         }
     } else if (msg.event === 'NEWBLOCK') {
         mxToUsdRate = await fetchMXPrice();
