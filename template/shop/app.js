@@ -17,6 +17,7 @@ const PRICE_STORAGE_KEY = 'minima_last_price';
 const MESSAGES_STORAGE_KEY = 'mishop_messages';
 const BUYER_ADDRESS_STORAGE_KEY = 'mishop_buyer_address';
 const BUYER_IDENTITY_KEY = 'mishop_buyer_identity';
+const SHOP_CONFIG_KEY = 'mishop_config';
 
 let dbReady = false;
 let mdsSqlWorking = false;
@@ -395,8 +396,8 @@ async function saveMessages(messages) {
 async function loadMessages() {
     const data = await loadFile(MESSAGES_STORAGE_KEY);
     if (!data || data === 'undefined' || data === 'null') {
-        console.log('loadMessages: no file data, returning empty (will rebuild from chain)');
-        return [];
+        console.log('loadMessages: no file data, trying SQL');
+        return loadMessagesFromDb();
     }
     try {
         let msgs;
@@ -405,18 +406,18 @@ async function loadMessages() {
         } else if (typeof data === 'object' && data !== null && Array.isArray(data)) {
             msgs = data;
         } else {
-            console.error('loadMessages: file data is not an array (' + typeof data + '), rebuilding from chain');
-            return recoverMessagesFromChain();
+            console.error('loadMessages: file data is not an array (' + typeof data + '), falling back to SQL');
+            return loadMessagesFromDb();
         }
         if (!Array.isArray(msgs)) {
-            console.error('loadMessages: parsed data is not an array (' + typeof msgs + '), rebuilding from chain');
-            return recoverMessagesFromChain();
+            console.error('loadMessages: parsed data is not an array (' + typeof msgs + '), falling back to SQL');
+            return loadMessagesFromDb();
         }
         console.log('loadMessages: loaded', msgs.length, 'messages from file');
         return msgs;
     } catch (e) {
-        console.error('loadMessages: parse error, returning empty (will rebuild from chain):', e);
-        return recoverMessagesFromChain();
+        console.error('loadMessages: parse error, falling back to SQL:', e);
+        return loadMessagesFromDb();
     }
 }
 
@@ -513,6 +514,7 @@ function addMessage(message) {
     
     currentMessages.unshift(message);
     saveMessages(currentMessages);
+    saveMessageToDb(message);
     renderInbox();
     if (typeof MDS !== 'undefined') {
         MDS.notify('New message: ' + (message.subject || 'Order'));
@@ -681,8 +683,35 @@ async function loadBuyerIdentity() {
             identity = data;
         } else {
             console.error('loadBuyerIdentity: unexpected data type:', typeof data);
-            return null;
+    return null;
+}
+
+async function saveShopConfig() {
+    const config = {
+        buyerAddress: buyerAddress || null,
+        buyerPublicKey: buyerPublicKey || null,
+        buyerInboxAddress: buyerInboxAddress || null,
+        vendorAddress: vendorAddress || null,
+        vendorPublicKey: vendorPublicKey || null
+    };
+    await saveFile(SHOP_CONFIG_KEY, JSON.stringify(config));
+    console.log('saveShopConfig: saved config to file');
+}
+
+async function loadShopConfig() {
+    const data = await loadFile(SHOP_CONFIG_KEY);
+    if (!data) return null;
+    try {
+        let config = typeof data === 'string' ? JSON.parse(data) : data;
+        if (config && typeof config === 'object') {
+            console.log('loadShopConfig: loaded from file');
+            return config;
         }
+    } catch (e) {
+        console.error('loadShopConfig: parse error', e);
+    }
+    return null;
+}
         if (identity && identity.address && (identity.address.startsWith('0x') || identity.address.startsWith('Mx'))) {
             console.log('loadBuyerIdentity: loaded existing identity, address:', identity.address.substring(0, 20) + '...');
             return identity;
@@ -2415,6 +2444,7 @@ MDS.init(async (msg) => {
                 console.log('New buyer public key from node:', buyerPublicKey ? buyerPublicKey.substring(0, 20) + '...' : 'null');
             }
             await saveBuyerIdentity(buyerInboxAddress, buyerPublicKey);
+            await saveShopConfig();
 
             if (typeof MDS !== 'undefined') {
                 MDS.cmd('coinnotify action:add address:' + buyerInboxAddress, function(resp) {
@@ -2425,6 +2455,8 @@ MDS.init(async (msg) => {
             startReplyPolling();
             setTimeout(() => recoverRepliesFromChain(), 5000);
             setTimeout(() => checkVendorAddressForMessages(), 3000);
+        } else {
+            await saveShopConfig();
         }
         
         setTimeout(() => checkForUnacknowledgedOrders(), 5000);

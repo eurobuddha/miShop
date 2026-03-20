@@ -135,7 +135,7 @@ function generateInboxConfig(config) {
 // This inbox is paired with your miniMerch shops
 
 const INBOX_CONFIG = {
-    vendorAddress: "${config.obfuscated}",
+    obfuscatedVendorAddress: "${config.obfuscated}",
     appName: "miniMerchInbox",
     version: "1.0.0"
 };

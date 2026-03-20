@@ -10,6 +10,7 @@ let dbReady = false;
 let mdsSqlWorking = false;
 let fileReady = false;
 const MESSAGES_FILE_KEY = 'mishop_inbox_messages';
+const INBOX_CONFIG_FILE_KEY = 'mishop_inbox_config';
 
 function escapeSQL(val) {
     if (val == null) return 'NULL';
@@ -386,11 +387,11 @@ function decodeObfuscated(str, salt) {
 }
 
 function getVendorAddress() {
-    if (typeof INBOX_CONFIG === 'undefined' || !INBOX_CONFIG.vendorAddress) {
+    if (typeof INBOX_CONFIG === 'undefined' || !INBOX_CONFIG.obfuscatedVendorAddress) {
         console.error('INBOX_CONFIG not found');
         return null;
     }
-    return INBOX_CONFIG.vendorAddress;
+    return INBOX_CONFIG.obfuscatedVendorAddress;
 }
 
 function textToHex(text) {
@@ -511,8 +512,8 @@ async function saveMessages(messages) {
 async function loadMessages() {
     const data = await loadFile(MESSAGES_FILE_KEY);
     if (!data || data === 'undefined' || data === 'null') {
-        console.log('loadMessages: no file data, returning empty (will rebuild from chain)');
-        return [];
+        console.log('loadMessages: no file data, trying SQL');
+        return loadMessagesFromDb();
     }
     try {
         let msgs;
@@ -521,18 +522,18 @@ async function loadMessages() {
         } else if (typeof data === 'object' && data !== null && Array.isArray(data)) {
             msgs = data;
         } else {
-            console.error('loadMessages: file data is not an array (' + typeof data + '), rebuilding from chain');
-            return recoverMessagesFromChain();
+            console.error('loadMessages: file data is not an array (' + typeof data + '), falling back to SQL');
+            return loadMessagesFromDb();
         }
         if (!Array.isArray(msgs)) {
-            console.error('loadMessages: parsed data is not an array (' + typeof msgs + '), rebuilding from chain');
-            return recoverMessagesFromChain();
+            console.error('loadMessages: parsed data is not an array (' + typeof msgs + '), falling back to SQL');
+            return loadMessagesFromDb();
         }
         console.log('loadMessages: loaded', msgs.length, 'messages from file');
         return msgs;
     } catch (e) {
-        console.error('loadMessages: parse error, rebuilding from chain:', e);
-        return recoverMessagesFromChain();
+        console.error('loadMessages: parse error, falling back to SQL:', e);
+        return loadMessagesFromDb();
     }
 }
 
@@ -617,6 +618,7 @@ function addMessage(message) {
     currentMessages.unshift(message);
     currentMessages.sort((a, b) => b.timestamp - a.timestamp);
     saveMessages(currentMessages);
+    saveMessageToDb(message);
     console.log('ADD MESSAGE: After adding', message.ref, 'currentMessages has', currentMessages.length, 'messages');
     console.log('ADD MESSAGE: Calling renderInbox...');
     renderInbox();
@@ -1268,9 +1270,34 @@ async function sendReply(msg) {
                 statusEl.className = 'reply-status error';
                 sendBtn.disabled = false;
                 sendBtn.textContent = '📤 Send Reply';
-            }
-        });
-        
+    }
+});
+
+async function saveInboxConfig() {
+    const config = {
+        inboxAddress: myAddress || null,
+        inboxPublicKey: null,
+        vendorAddress: getVendorAddress() ? (() => { try { return JSON.parse(atob(getVendorAddress())).address; } catch(e) { return null; } })() : null
+    };
+    await saveFile(INBOX_CONFIG_FILE_KEY, JSON.stringify(config));
+    console.log('saveInboxConfig: saved to file');
+}
+
+async function loadInboxConfig() {
+    const data = await loadFile(INBOX_CONFIG_FILE_KEY);
+    if (!data) return null;
+    try {
+        let config = typeof data === 'string' ? JSON.parse(data) : data;
+        if (config && typeof config === 'object') {
+            console.log('loadInboxConfig: loaded from file');
+            return config;
+        }
+    } catch (e) {
+        console.error('loadInboxConfig: parse error', e);
+    }
+    return null;
+}
+
     } catch (error) {
         console.error('Error sending reply:', error);
         statusEl.textContent = 'Error: ' + error.message;
@@ -1345,6 +1372,7 @@ MDS.init(async (msg) => {
         renderInbox();
         setupEventListeners();
         initInbox();
+        await saveInboxConfig();
         
         setTimeout(() => recoverFromChain(), 3000);
         
@@ -1352,7 +1380,8 @@ MDS.init(async (msg) => {
         console.log('NOTIFYCOIN event:', JSON.stringify(msg.data));
         if (msg.data && msg.data.coin && msg.data.coin.address === myAddress) {
             const coin = msg.data.coin;
-            if (getState99Data(coin.state)) {
+            const state98 = coin.state && coin.state[98];
+            if (getState99Data(coin.state) || state98) {
                 processIncomingMessage(coin);
             }
         }
