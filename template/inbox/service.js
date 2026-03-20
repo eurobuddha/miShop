@@ -28,10 +28,22 @@ function loadFile(key) {
     return new Promise((resolve) => {
         MDS.file.load(key, (response) => {
             if (response && response.status && response.response != null) {
-                if (typeof response.response === 'string') {
-                    resolve(response.response);
+                // MDS returns wrapper: {action:"LOAD", file:"...", data:"actual content"}
+                // Extract the actual data from response.response.data
+                let data = response.response;
+                if (typeof data === 'object' && data !== null && 'data' in data) {
+                    data = data.data;
+                }
+                if (typeof data === 'string') {
+                    resolve(data);
+                } else if (data != null) {
+                    try {
+                        resolve(JSON.stringify(data));
+                    } catch (e) {
+                        resolve(null);
+                    }
                 } else {
-                    resolve(JSON.stringify(response.response));
+                    resolve(null);
                 }
             } else {
                 resolve(null);
