@@ -722,17 +722,6 @@ async function loadShopConfig() {
     return null;
 }
 
-function getFreshBuyerAddress() {
-    return new Promise((resolve) => {
-        getMyAddress((address) => {
-            if (address) {
-                saveBuyerAddress(address);
-            }
-            resolve(address || null);
-        });
-    });
-}
-
 async function getOrCreateBuyerAddress(preloadedIdentity) {
     const savedIdentity = preloadedIdentity || await loadBuyerIdentity();
     if (savedIdentity && savedIdentity.address) {
@@ -742,7 +731,15 @@ async function getOrCreateBuyerAddress(preloadedIdentity) {
     if (savedAddress) {
         return savedAddress;
     }
-    return getFreshBuyerAddress();
+    return new Promise((resolve) => {
+        getMyAddress((address) => {
+            const addr = address || null;
+            if (addr) {
+                saveBuyerAddress(addr);
+            }
+            resolve(addr);
+        });
+    });
 }
 
 function processIncomingMessage(coin) {
@@ -776,39 +773,6 @@ function processIncomingMessage(coin) {
             console.log('Could not decrypt message (might not be for us)');
         }
     });
-}
-
-async function checkVendorAddressForMessages() {
-    if (!vendorAddress) return;
-    
-    console.log('=== CHECKING VENDOR ADDRESS FOR INCOMING MESSAGES ===');
-    
-    try {
-        const result = await new Promise((resolve) => {
-            MDS.cmd('coins address:' + vendorAddress, resolve);
-        });
-        
-        if (!result || !result.status || !Array.isArray(result.response)) {
-            console.log('Vendor address check: no UTXOs found');
-            return;
-        }
-        
-        console.log('Vendor address check: found', result.response.length, 'UTXOs');
-        
-        for (const coin of result.response) {
-            const coinTxid = coin.txid || coin.txnid || coin.coinid || '';
-            const exists = currentMessages.find(m => m.txid === coinTxid);
-            if (exists) continue;
-            
-            const stateData = getState99Data(coin.state);
-            if (!stateData) continue;
-            
-            console.log('Vendor address: processing coin', coinTxid.substring(0, 20));
-            processIncomingMessage(coin);
-        }
-    } catch (e) {
-        console.error('Vendor address check error:', e);
-    }
 }
 
 function processReplyMessage(coin) {
@@ -2455,7 +2419,6 @@ MDS.init(async (msg) => {
 
             startReplyPolling();
             setTimeout(() => recoverRepliesFromChain(), 5000);
-            setTimeout(() => checkVendorAddressForMessages(), 3000);
         } else {
             await saveShopConfig();
         }
