@@ -1,16 +1,34 @@
 {
-  "name": "mishop-generator",
-  "version": "1.0.0",
-  "description": "CLI tool to generate miShop MiniDapps for Minima blockchain",
-  "main": "generator.js",
-  "scripts": {
-    "setup": "node setup.js",
-    "generate": "node generator.js",
-    "help": "node generator.js --help"
+  "name": "@eurobuddha/mini-merch",
+  "version": "0.1.0",
+  "description": "CLI tool to generate miniMerch MiniDapps for the Minima blockchain — sell physical or digital goods with built-in encrypted messaging",
+  "main": "src/index.js",
+  "bin": {
+    "mini-merch": "./src/index.js"
   },
-  "keywords": ["minima", "minidapp", "generator", "blockchain"],
-  "author": "",
+  "files": [
+    "src/",
+    "template/",
+    "item.jpg",
+    "ticket.jpg"
+  ],
+  "keywords": [
+    "minima",
+    "minidapp",
+    "blockchain",
+    "ecommerce",
+    "messaging",
+    "cli"
+  ],
+  "author": "eurobuddha",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eurobuddha/miniMerch"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "archiver": "^7.0.1",
     "commander": "^12.1.0"
