@@ -100,6 +100,7 @@ function getState99Data(state) {
 async function initDB() {
     if (dbReady) return;
     try {
+        // Create tables with all columns
         await MDS.sql(
             `CREATE TABLE IF NOT EXISTS messages (` +
             `id INTEGER PRIMARY KEY AUTOINCREMENT,` +
@@ -114,6 +115,14 @@ async function initDB() {
         await MDS.sql(
             `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`
         );
+        
+        // Migration: Add columns if they don't exist (for existing installs)
+        try { await MDS.sql(`ALTER TABLE messages ADD COLUMN subject TEXT`); } catch (e) {}
+        try { await MDS.sql(`ALTER TABLE messages ADD COLUMN originalOrder TEXT`); } catch (e) {}
+        try { await MDS.sql(`ALTER TABLE messages ADD COLUMN direction TEXT DEFAULT 'sent'`); } catch (e) {}
+        try { await MDS.sql(`ALTER TABLE messages ADD COLUMN vendorPublicKey TEXT`); } catch (e) {}
+        try { await MDS.sql(`ALTER TABLE messages ADD COLUMN vendorAddress TEXT`); } catch (e) {}
+        
         dbReady = true;
         console.log('Shop DB initialized');
     } catch (err) {

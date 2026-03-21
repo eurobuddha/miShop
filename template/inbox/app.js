@@ -55,6 +55,7 @@ function getState99Data(state) {
 async function initDB() {
     if (dbReady) return;
     try {
+        // Create table with all columns
         await MDS.sql(
             `CREATE TABLE IF NOT EXISTS messages (` +
             `id INTEGER PRIMARY KEY AUTOINCREMENT,` +
@@ -66,6 +67,13 @@ async function initDB() {
             `buyerPublicKey TEXT, buyerAddress TEXT,` +
             `originalRef TEXT, originalOrder TEXT, originalProduct TEXT)`
         );
+        
+        // Migration: Add columns if they don't exist (for existing installs)
+        try { await MDS.sql(`ALTER TABLE messages ADD COLUMN originalRef TEXT`); } catch (e) {}
+        try { await MDS.sql(`ALTER TABLE messages ADD COLUMN originalOrder TEXT`); } catch (e) {}
+        try { await MDS.sql(`ALTER TABLE messages ADD COLUMN originalProduct TEXT`); } catch (e) {}
+        try { await MDS.sql(`ALTER TABLE messages ADD COLUMN direction TEXT DEFAULT 'received'`); } catch (e) {}
+        
         dbReady = true;
         console.log('Inbox DB initialized');
     } catch (err) {
