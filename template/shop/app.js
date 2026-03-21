@@ -524,7 +524,7 @@ async function sendBuyerReply() {
         const command = 'send address:' + MINIMERCH_ADDRESS + ' amount:0.0001 tokenid:' + TOKEN_IDS.MINIMA + ' state:' + JSON.stringify(state);
         console.log('Sending buyer reply to MINIMERCH_ADDRESS');
         
-        MDS.cmd(command, (response) => {
+        MDS.cmd(command, async (response) => {
             console.log('Buyer reply TX Response:', JSON.stringify(response));
             if (response && response.status) {
                 const txid = response.response?.txnid || 'confirmed';
