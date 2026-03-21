@@ -152,13 +152,24 @@ async function loadSetting(key) {
 
 async function saveMessageToDb(message) {
     try {
-        const result = await MDS.sql(
-            `INSERT OR IGNORE INTO messages ` +
+        // Generate randomid if not present
+        if (!message.randomid) {
+            message.randomid = generateRandomId();
+        }
+        
+        // Check if already exists
+        const existsResp = await MDS.sql(`SELECT id FROM messages WHERE randomid = ${escapeSQL(message.randomid)}`);
+        if (existsResp && existsResp.status && existsResp.rows && existsResp.rows.length > 0) {
+            console.log('saveMessageToDb: message already exists, randomid:', message.randomid);
+            return true; // Already saved
+        }
+        
+        const sql = `INSERT INTO messages ` +
             `(randomid, ref, type, product, size, amount, currency, delivery, shipping, message, ` +
             `timestamp, coinid, read, direction, buyerPublicKey, vendorPublicKey, vendorAddress, ` +
             `subject, originalOrder) ` +
             `VALUES (` +
-            `${escapeSQL(message.randomid || generateRandomId())}, ` +
+            `${escapeSQL(message.randomid)}, ` +
             `${escapeSQL(message.ref || '')}, ${escapeSQL(message.type || 'ORDER')}, ` +
             `${escapeSQL(message.product || '')}, ${escapeSQL(message.size || '')}, ` +
             `${escapeSQL(message.amount || '')}, ${escapeSQL(message.currency || '')}, ` +
@@ -168,11 +179,33 @@ async function saveMessageToDb(message) {
             `${escapeSQL(message.direction || 'sent')}, ` +
             `${escapeSQL(message.buyerPublicKey || '')}, ` +
             `${escapeSQL(message.vendorPublicKey || '')}, ${escapeSQL(message.vendorAddress || '')}, ` +
-            `${escapeSQL(message.subject || '')}, ${escapeSQL(message.originalOrder || '')})`
-        );
-        console.log('saveMessageToDb result:', result?.status ? 'success' : 'failed', 'randomid:', message.randomid);
+            `${escapeSQL(message.subject || '')}, ${escapeSQL(message.originalOrder || '')})`;
+        
+        console.log('saveMessageToDb SQL:', sql.substring(0, 200) + '...');
+        
+        const result = await MDS.sql(sql);
+        
+        if (result && result.status) {
+            console.log('saveMessageToDb SUCCESS: randomid:', message.randomid, 'direction:', message.direction);
+            return true;
+        } else {
+            console.error('saveMessageToDb FAILED:', result?.error || 'unknown error', 'randomid:', message.randomid);
+            return false;
+        }
     } catch (err) {
-        console.error('saveMessageToDb error:', err);
+        console.error('saveMessageToDb error:', err, 'randomid:', message.randomid);
+        return false;
+    }
+}
+
+async function updateMessageReadStatus(randomid, read) {
+    try {
+        const result = await MDS.sql(`UPDATE messages SET read = ${read ? 1 : 0} WHERE randomid = ${escapeSQL(randomid)}`);
+        console.log('updateMessageReadStatus:', randomid, 'read:', read, 'result:', result?.status);
+        return result && result.status;
+    } catch (err) {
+        console.error('updateMessageReadStatus error:', err);
+        return false;
     }
 }
 
@@ -304,19 +337,29 @@ function getMyPublicKey() {
 
 // ============ MESSAGE HANDLING ============
 
-function addMessage(message) {
+async function addMessage(message) {
     // Use randomid for deduplication (ChainMail pattern)
     const randomid = message.randomid || (message.ref + '_' + message.timestamp);
     const exists = currentMessages.find(m => m.randomid === randomid);
     if (exists) {
-        console.log('Message already exists:', randomid);
+        console.log('Message already exists in memory:', randomid);
         return;
     }
     
     message.randomid = randomid;
+    
+    // Save to DB first (CRITICAL for persistence)
+    const saved = await saveMessageToDb(message);
+    console.log('addMessage: saved to DB:', saved, 'randomid:', randomid, 'direction:', message.direction);
+    
+    // Then add to memory
     currentMessages.unshift(message);
-    saveMessageToDb(message);
-    renderInbox();
+    currentMessages.sort((a, b) => b.timestamp - a.timestamp);
+    
+    // Update UI
+    if (currentView === 'inbox' || currentView === 'sent') {
+        renderInbox();
+    }
     
     if (message.direction === 'received' && typeof MDS !== 'undefined') {
         MDS.notify('New message: ' + (message.ref || 'Reply'));
@@ -367,7 +410,7 @@ async function processReplyMessage(coin) {
         vendorAddress: decrypted.vendorAddress || null
     };
     
-    addMessage(message);
+    await addMessage(message);
 }
 
 async function scanForReplies() {
@@ -503,7 +546,7 @@ async function sendBuyerReply() {
                     read: true,
                     direction: 'sent'
                 };
-                addMessage(sentMessage);
+                await addMessage(sentMessage);
                 
                 setTimeout(() => {
                     closeBuyerReplyModal();
@@ -640,7 +683,7 @@ async function processPayment() {
         console.log('Order sent with txid:', orderTxid);
         
         // Save sent order locally
-        addMessage({
+        await addMessage({
             id: Date.now().toString(),
             randomid: orderPayload.randomid,
             ref: lastOrderReference,
@@ -1234,24 +1277,42 @@ function getShippingLabel(shipping) {
 
 function renderInbox() {
     const mainContent = document.querySelector('.main-content');
-    const inboxMessages = currentMessages.filter(m => m.direction === 'received');
+    const allReceivedMessages = currentMessages.filter(m => m.direction === 'received');
+    const unreadMessages = allReceivedMessages.filter(m => !m.read);
     const sentMessages = currentMessages.filter(m => m.direction === 'sent');
     
-    const unreadCount = inboxMessages.filter(m => !m.read).length;
+    const unreadCount = unreadMessages.length;
+    const totalCount = allReceivedMessages.length;
+    const sentCount = sentMessages.length;
+    
+    // Determine which messages to show based on current view
+    let displayMessages;
+    if (currentView === 'inbox') {
+        displayMessages = unreadMessages;
+    } else if (currentView === 'all') {
+        displayMessages = allReceivedMessages;
+    } else if (currentView === 'sent') {
+        displayMessages = sentMessages;
+    } else {
+        displayMessages = unreadMessages;
+    }
     
     mainContent.innerHTML = `
         <div class="inbox-container">
             <div class="inbox-tabs">
                 <button class="inbox-tab ${currentView === 'inbox' ? 'active' : ''}" data-view="inbox">
-                    📥 Inbox ${unreadCount > 0 ? `<span class="badge">${unreadCount}</span>` : ''}
+                    📥 Inbox ${unreadCount > 0 ? `<span class="badge">${unreadCount}</span>` : '(0)'}
+                </button>
+                <button class="inbox-tab ${currentView === 'all' ? 'active' : ''}" data-view="all">
+                    📬 All (${totalCount})
                 </button>
                 <button class="inbox-tab ${currentView === 'sent' ? 'active' : ''}" data-view="sent">
-                    📤 Sent (${sentMessages.length})
+                    📤 Sent (${sentCount})
                 </button>
             </div>
             
             <div class="inbox-list" id="inbox-list">
-                ${currentView === 'inbox' ? renderMessageList(inboxMessages, 'received') : renderMessageList(sentMessages, 'sent')}
+                ${renderMessageList(displayMessages, currentView === 'sent' ? 'sent' : 'received')}
             </div>
             
             <div class="inbox-detail hidden" id="inbox-detail">
@@ -1295,14 +1356,17 @@ function renderMessageList(messages, type) {
 function renderMessageDetail(msg) {
     const isReceived = msg.direction === 'received';
     const isReply = msg.type === 'REPLY';
+    const isBuyerReply = msg.type === 'BUYER_REPLY';
     const canReply = isReply && msg.vendorPublicKey;
+    const showMarkAsRead = isReceived && !msg.read;
     
-    if (isReply) {
+    // Vendor Reply (received)
+    if (isReply && isReceived) {
         return `
             <button class="back-btn" id="back-to-list">← Back</button>
             <div class="message-header">
                 <h3>↩️ Vendor Reply</h3>
-                <span class="message-direction">📥 Received</span>
+                <span class="message-direction">${!msg.read ? '📨 Unread' : '📧 Read'}</span>
             </div>
             
             <div class="message-info">
@@ -1327,53 +1391,118 @@ function renderMessageDetail(msg) {
                 <p class="reply-message">${msg.message}</p>
             </div>
             
-            ${canReply ? `
-            <div class="reply-actions">
-                <button class="reply-to-vendor-btn" id="reply-to-vendor-btn" data-id="${msg.id}">
-                    ↩️ Reply to Vendor
-                </button>
+            <div class="message-actions">
+                ${showMarkAsRead ? `<button class="mark-read-btn" id="mark-read-btn" data-id="${msg.id}">✓ Mark as Read</button>` : ''}
+                ${canReply ? `<button class="reply-to-vendor-btn" id="reply-to-vendor-btn" data-id="${msg.id}">↩️ Reply to Vendor</button>` : ''}
             </div>
-            ` : `
+            
+            ${!canReply ? `
             <div class="reply-warning">
                 <p>⚠️ Cannot reply - missing vendor contact info</p>
             </div>
-            `}
+            ` : ''}
         `;
     }
     
+    // Sent BUYER_REPLY
+    if (isBuyerReply && !isReceived) {
+        return `
+            <button class="back-btn" id="back-to-list">← Back</button>
+            <div class="message-header">
+                <h3>📤 Sent Reply</h3>
+                <span class="message-direction">📤 Sent</span>
+            </div>
+            
+            <div class="message-info">
+                <div class="info-row">
+                    <span class="info-label">Order Ref:</span>
+                    <span class="info-value">${msg.ref}</span>
+                </div>
+                ${msg.product ? `
+                <div class="info-row">
+                    <span class="info-label">Re:</span>
+                    <span class="info-value">${msg.product}</span>
+                </div>
+                ` : ''}
+                <div class="info-row">
+                    <span class="info-label">Time:</span>
+                    <span class="info-value">${new Date(msg.timestamp).toLocaleString()}</span>
+                </div>
+            </div>
+            
+            <div class="reply-content">
+                <h4>Your Message:</h4>
+                <p class="reply-message">${msg.message}</p>
+            </div>
+        `;
+    }
+    
+    // Sent ORDER
+    if (!isReceived) {
+        return `
+            <button class="back-btn" id="back-to-list">← Back</button>
+            <div class="message-header">
+                <h3>📤 ${msg.subject || msg.product || 'Order: ' + msg.ref}</h3>
+                <span class="message-direction">📤 Sent</span>
+            </div>
+            
+            <div class="message-info">
+                <div class="info-row">
+                    <span class="info-label">Order Ref:</span>
+                    <span class="info-value">${msg.ref}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Product:</span>
+                    <span class="info-value">${msg.product}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Size:</span>
+                    <span class="info-value">${msg.size}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Amount:</span>
+                    <span class="info-value">$${msg.amount} ${msg.currency}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Shipping:</span>
+                    <span class="info-value">${getShippingLabel(msg.shipping)}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Time:</span>
+                    <span class="info-value">${new Date(msg.timestamp).toLocaleString()}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Delivery To:</span>
+                    <span class="info-value">${msg.delivery || 'N/A'}</span>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Default: received message (should not reach here normally)
     return `
         <button class="back-btn" id="back-to-list">← Back</button>
         <div class="message-header">
-            <h3>${msg.subject || msg.product || 'Order: ' + msg.ref}</h3>
-            <span class="message-direction">${isReceived ? '📥 Received' : '📤 Sent'}</span>
+            <h3>${msg.subject || msg.product || 'Message: ' + msg.ref}</h3>
+            <span class="message-direction">${!msg.read ? '📨 Unread' : '📧 Read'}</span>
         </div>
         
         <div class="message-info">
             <div class="info-row">
-                <span class="info-label">Order Ref:</span>
+                <span class="info-label">Ref:</span>
                 <span class="info-value">${msg.ref}</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Product:</span>
-                <span class="info-value">${msg.product}</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Size:</span>
-                <span class="info-value">${msg.size}</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Amount:</span>
-                <span class="info-value">$${msg.amount} ${msg.currency}</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Shipping:</span>
-                <span class="info-value">${getShippingLabel(msg.shipping)}</span>
             </div>
             <div class="info-row">
                 <span class="info-label">Time:</span>
                 <span class="info-value">${new Date(msg.timestamp).toLocaleString()}</span>
             </div>
         </div>
+        
+        ${showMarkAsRead ? `
+        <div class="message-actions">
+            <button class="mark-read-btn" id="mark-read-btn" data-id="${msg.id}">✓ Mark as Read</button>
+        </div>
+        ` : ''}
     `;
 }
 
@@ -1384,6 +1513,8 @@ function setupInboxEventListeners() {
             selectedMessage = null;
             document.getElementById('inbox-detail').classList.add('hidden');
             document.getElementById('inbox-list').classList.remove('hidden');
+            document.querySelectorAll('.inbox-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
             renderInbox();
         });
     });
@@ -1392,10 +1523,7 @@ function setupInboxEventListeners() {
         item.addEventListener('click', () => {
             const msgId = item.dataset.id;
             selectedMessage = currentMessages.find(m => m.id == msgId);
-            if (selectedMessage && selectedMessage.direction === 'received' && !selectedMessage.read) {
-                selectedMessage.read = true;
-                saveMessageToDb(selectedMessage);
-            }
+            // Do NOT auto-mark as read - let user explicitly mark via button
             document.getElementById('inbox-list').classList.add('hidden');
             document.getElementById('inbox-detail').classList.remove('hidden');
             document.getElementById('inbox-detail').innerHTML = renderMessageDetail(selectedMessage);
@@ -1411,6 +1539,28 @@ function setupDetailEventListeners() {
             selectedMessage = null;
             document.getElementById('inbox-detail').classList.add('hidden');
             document.getElementById('inbox-list').classList.remove('hidden');
+            renderInbox(); // Re-render to update counts
+        });
+    }
+    
+    // Mark as Read button
+    const markReadBtn = document.getElementById('mark-read-btn');
+    if (markReadBtn) {
+        markReadBtn.addEventListener('click', async () => {
+            const msgId = markReadBtn.dataset.id;
+            const msg = currentMessages.find(m => m.id == msgId);
+            if (msg) {
+                msg.read = true;
+                await updateMessageReadStatus(msg.randomid, true);
+                markReadBtn.textContent = '✓ Marked as Read';
+                markReadBtn.disabled = true;
+                markReadBtn.style.opacity = '0.5';
+                // Update the detail view header
+                const directionEl = document.querySelector('.message-direction');
+                if (directionEl) {
+                    directionEl.textContent = '📧 Read';
+                }
+            }
         });
     }
     
@@ -1465,11 +1615,11 @@ function setupNavigation() {
     header.innerHTML = `
         <div class="logo">
             <span class="logo-icon">🛒</span>
-            <h1>miShop</h1>
+            <h1>miniMerch</h1>
         </div>
         <nav class="nav-tabs">
             <button class="nav-btn active" data-view="shop">🛍️ Shop</button>
-            <button class="nav-btn" data-view="inbox" id="nav-inbox">📬 Inbox</button>
+            <button class="nav-btn" data-view="inbox" id="nav-inbox">📬 Mailbox</button>
         </nav>
         <div class="header-decoration">
             <svg class="peace-sign" viewBox="0 0 100 100" width="40" height="40">

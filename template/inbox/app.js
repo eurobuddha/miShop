@@ -83,13 +83,24 @@ async function initDB() {
 
 async function saveMessageToDb(message) {
     try {
-        const result = await MDS.sql(
-            `INSERT OR IGNORE INTO messages ` +
+        // Generate randomid if not present
+        if (!message.randomid) {
+            message.randomid = generateRandomId();
+        }
+        
+        // Check if already exists
+        const existsResp = await MDS.sql(`SELECT id FROM messages WHERE randomid = ${escapeSQL(message.randomid)}`);
+        if (existsResp && existsResp.status && existsResp.rows && existsResp.rows.length > 0) {
+            console.log('saveMessageToDb: message already exists, randomid:', message.randomid);
+            return true; // Already saved
+        }
+        
+        const sql = `INSERT INTO messages ` +
             `(randomid, ref, type, product, size, amount, currency, delivery, shipping, message, ` +
             `timestamp, coinid, read, direction, buyerPublicKey, buyerAddress, ` +
             `originalRef, originalOrder, originalProduct) ` +
             `VALUES (` +
-            `${escapeSQL(message.randomid || generateRandomId())}, ` +
+            `${escapeSQL(message.randomid)}, ` +
             `${escapeSQL(message.ref || '')}, ${escapeSQL(message.type || 'ORDER')}, ` +
             `${escapeSQL(message.product || '')}, ${escapeSQL(message.size || '')}, ` +
             `${escapeSQL(message.amount || '')}, ${escapeSQL(message.currency || '')}, ` +
@@ -99,11 +110,22 @@ async function saveMessageToDb(message) {
             `${escapeSQL(message.direction || 'received')}, ` +
             `${escapeSQL(message.buyerPublicKey || '')}, ${escapeSQL(message.buyerAddress || '')}, ` +
             `${escapeSQL(message.originalRef || '')}, ${escapeSQL(message.originalOrder || '')}, ` +
-            `${escapeSQL(message.originalProduct || '')})`
-        );
-        console.log('saveMessageToDb result:', result?.status ? 'success' : 'failed', 'randomid:', message.randomid);
+            `${escapeSQL(message.originalProduct || '')})`;
+        
+        console.log('saveMessageToDb SQL:', sql.substring(0, 200) + '...');
+        
+        const result = await MDS.sql(sql);
+        
+        if (result && result.status) {
+            console.log('saveMessageToDb SUCCESS: randomid:', message.randomid, 'direction:', message.direction);
+            return true;
+        } else {
+            console.error('saveMessageToDb FAILED:', result?.error || 'unknown error', 'randomid:', message.randomid);
+            return false;
+        }
     } catch (err) {
-        console.error('saveMessageToDb error:', err);
+        console.error('saveMessageToDb error:', err, 'randomid:', message.randomid);
+        return false;
     }
 }
 
@@ -245,19 +267,26 @@ function getMyPublicKey() {
 
 // ============ MESSAGE HANDLING ============
 
-function addMessage(message) {
+async function addMessage(message) {
     // Use randomid for deduplication (ChainMail pattern)
     const randomid = message.randomid || (message.ref + '_' + message.timestamp);
     const exists = currentMessages.find(m => m.randomid === randomid);
     if (exists) {
-        console.log('Message already exists:', randomid);
+        console.log('Message already exists in memory:', randomid);
         return;
     }
     
     message.randomid = randomid;
+    
+    // Save to DB first (CRITICAL for persistence)
+    const saved = await saveMessageToDb(message);
+    console.log('addMessage: saved to DB:', saved, 'randomid:', randomid, 'direction:', message.direction);
+    
+    // Then add to memory
     currentMessages.unshift(message);
     currentMessages.sort((a, b) => b.timestamp - a.timestamp);
-    saveMessageToDb(message);
+    
+    // Update UI
     renderInbox();
     
     if (message.direction === 'received' && typeof MDS !== 'undefined') {
@@ -308,7 +337,7 @@ async function processIncomingMessage(coin) {
             buyerPublicKey: decrypted.buyerPublicKey || decrypted._senderPublicKey || '',
             buyerAddress: decrypted.buyerAddress || ''
         };
-        addMessage(message);
+        await addMessage(message);
         
     } else if (decrypted.type === 'BUYER_REPLY') {
         // Buyer's reply to vendor
@@ -326,7 +355,7 @@ async function processIncomingMessage(coin) {
             buyerPublicKey: decrypted.buyerPublicKey || decrypted._senderPublicKey || '',
             buyerAddress: decrypted.buyerAddress || ''
         };
-        addMessage(message);
+        await addMessage(message);
     }
 }
 
