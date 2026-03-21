@@ -10,6 +10,8 @@ let selectedMessage = null;
 let myPublicKey = null;
 let pollingInterval = null;
 let dbReady = false;
+let pendingReplyData = null; // Track pending reply for when confirmed
+let pendingReplyUid = null; // UID of pending reply command
 
 function escapeSQL(val) {
     if (val == null) return 'NULL';
@@ -67,14 +69,14 @@ async function initDB() {
         // Create table with all columns
         const createResult = await sqlAsync(
             `CREATE TABLE IF NOT EXISTS messages (` +
-            `id INTEGER PRIMARY KEY AUTOINCREMENT,` +
-            `randomid TEXT UNIQUE,` +
-            `ref TEXT, type TEXT, product TEXT, size TEXT,` +
-            `amount TEXT, currency TEXT, delivery TEXT, shipping TEXT,` +
-            `message TEXT, timestamp INTEGER, coinid TEXT,` +
-            `read INTEGER DEFAULT 0, direction TEXT DEFAULT 'received',` +
-            `buyerPublicKey TEXT, buyerAddress TEXT,` +
-            `originalRef TEXT, originalOrder TEXT, originalProduct TEXT)`
+            `id INTEGER PRIMARY KEY AUTO_INCREMENT,` +
+            `randomid VARCHAR(255) UNIQUE,` +
+            `ref VARCHAR(255), type VARCHAR(50), product VARCHAR(500), size VARCHAR(100),` +
+            `amount VARCHAR(50), currency VARCHAR(50), delivery VARCHAR(500), shipping VARCHAR(50),` +
+            `message TEXT, timestamp BIGINT, coinid VARCHAR(255),` +
+            `"read" INTEGER DEFAULT 0, direction VARCHAR(50) DEFAULT 'received',` +
+            `buyerPublicKey TEXT, buyerAddress VARCHAR(255),` +
+            `originalRef VARCHAR(255), originalOrder TEXT, originalProduct TEXT)`
         );
         console.log('CREATE messages table result:', JSON.stringify(createResult));
         
@@ -116,7 +118,7 @@ async function saveMessageToDb(message) {
         
         const sql = `INSERT INTO messages ` +
             `(randomid, ref, type, product, size, amount, currency, delivery, shipping, message, ` +
-            `timestamp, coinid, read, direction, buyerPublicKey, buyerAddress, ` +
+            `timestamp, coinid, "read", direction, buyerPublicKey, buyerAddress, ` +
             `originalRef, originalOrder, originalProduct) ` +
             `VALUES (` +
             `${escapeSQL(message.randomid)}, ` +
@@ -153,28 +155,35 @@ async function loadMessagesFromDb() {
         const resp = await sqlAsync(`SELECT * FROM messages ORDER BY timestamp DESC`);
         console.log('loadMessagesFromDb: found', resp?.rows?.length || 0, 'messages');
         if (resp && resp.status && resp.rows) {
-            return resp.rows.map(row => ({
-                id: row.id,
-                randomid: row.randomid,
-                ref: row.ref,
-                type: row.type,
-                product: row.product,
-                size: row.size,
-                amount: row.amount,
-                currency: row.currency,
-                delivery: row.delivery,
-                shipping: row.shipping,
-                message: row.message,
-                timestamp: row.timestamp,
-                coinid: row.coinid,
-                read: !!row.read,
-                direction: row.direction,
-                buyerPublicKey: row.buyerPublicKey,
-                buyerAddress: row.buyerAddress,
-                originalRef: row.originalRef,
-                originalOrder: row.originalOrder,
-                originalProduct: row.originalProduct
-            }));
+            // H2 database returns column names in UPPERCASE and numbers as strings
+            return resp.rows.map(row => {
+                const ts = row.TIMESTAMP || row.timestamp;
+                const dir = row.DIRECTION || row.direction || 'received';
+                const rd = row.READ || row.read;
+                console.log('loadMessagesFromDb row:', row.RANDOMID || row.randomid, 'direction:', dir, 'read:', rd);
+                return {
+                    id: row.ID || row.id,
+                    randomid: row.RANDOMID || row.randomid,
+                    ref: row.REF || row.ref,
+                    type: row.TYPE || row.type,
+                    product: row.PRODUCT || row.product,
+                    size: row.SIZE || row.size,
+                    amount: row.AMOUNT || row.amount,
+                    currency: row.CURRENCY || row.currency,
+                    delivery: row.DELIVERY || row.delivery,
+                    shipping: row.SHIPPING || row.shipping,
+                    message: row.MESSAGE || row.message,
+                    timestamp: ts ? parseInt(ts, 10) : Date.now(),
+                    coinid: row.COINID || row.coinid,
+                    read: !!(rd && rd !== '0' && rd !== 0),
+                    direction: dir,
+                    buyerPublicKey: row.BUYERPUBLICKEY || row.buyerPublicKey,
+                    buyerAddress: row.BUYERADDRESS || row.buyerAddress,
+                    originalRef: row.ORIGINALREF || row.originalRef,
+                    originalOrder: row.ORIGINALORDER || row.originalOrder,
+                    originalProduct: row.ORIGINALPRODUCT || row.originalProduct
+                };
+            });
         }
     } catch (err) {
         console.error('loadMessagesFromDb error:', err);
@@ -195,7 +204,7 @@ async function isMessageStored(randomid) {
 async function updateMessageInDb(message) {
     try {
         const result = await sqlAsync(
-            `UPDATE messages SET read = ${message.read ? 1 : 0} WHERE randomid = ${escapeSQL(message.randomid)}`
+            `UPDATE messages SET "read" = ${message.read ? 1 : 0} WHERE randomid = ${escapeSQL(message.randomid)}`
         );
         console.log('updateMessageInDb:', message.randomid, 'read:', message.read, 'result:', result?.status);
     } catch (err) {
@@ -487,44 +496,39 @@ async function sendReply(msg) {
         const command = 'send address:' + MINIMERCH_ADDRESS + ' amount:0.0001 tokenid:' + TOKEN_IDS.MINIMA + ' state:' + JSON.stringify(state);
         console.log('Sending vendor reply to MINIMERCH_ADDRESS');
         
+        // Store reply data for pending handling
+        pendingReplyData = {
+            randomid: replyPayload.randomid,
+            ref: msg.ref,
+            originalOrder: msg.product ? (msg.product + (msg.size ? ' - ' + msg.size : '')) : msg.ref,
+            originalProduct: msg.product || '',
+            message: messageText,
+            buyerPublicKey: msg.buyerPublicKey || '',
+            buyerAddress: msg.buyerAddress || ''
+        };
+        
         MDS.cmd(command, (response) => {
             console.log('Reply TX Response:', JSON.stringify(response));
+            
+            // Check if response is pending (node in read mode)
+            if (response && response.pending) {
+                pendingReplyUid = response.pendinguid;
+                console.log('Reply is PENDING - UID:', pendingReplyUid, '- waiting for user approval');
+                statusEl.textContent = 'Reply pending approval - check Pending Actions';
+                statusEl.className = 'reply-status pending';
+                sendBtn.textContent = '⏳ Pending...';
+                // Don't close modal - user needs to see status
+                return;
+            }
+            
             if (response && response.status) {
-                const txid = response.response?.txnid || 'confirmed';
-                statusEl.textContent = 'Reply sent! TX: ' + txid.substring(0, 20) + '...';
-                statusEl.className = 'reply-status success';
-                sendBtn.textContent = '✓ Sent!';
-                
-                // Save sent message locally
-                const sentMsg = {
-                    id: Date.now().toString(),
-                    randomid: replyPayload.randomid,
-                    ref: msg.ref,
-                    originalRef: msg.ref,
-                    originalOrder: msg.product ? (msg.product + (msg.size ? ' - ' + msg.size : '')) : msg.ref,
-                    originalProduct: msg.product || '',
-                    message: messageText,
-                    timestamp: Date.now(),
-                    type: 'REPLY',
-                    direction: 'sent',
-                    coinid: txid,
-                    buyerPublicKey: msg.buyerPublicKey || '',
-                    buyerAddress: msg.buyerAddress || ''
-                };
-                
-                currentMessages.unshift(sentMsg);
-                saveMessageToDb(sentMsg);
-                
-                setTimeout(() => {
-                    closeReplyModal();
-                    closeModal();
-                    renderInbox();
-                }, 2000);
+                completeVendorReply(response, statusEl, sendBtn);
             } else {
                 statusEl.textContent = 'Failed: ' + (response?.error || 'Transaction failed');
                 statusEl.className = 'reply-status error';
                 sendBtn.disabled = false;
                 sendBtn.textContent = '📤 Send Reply';
+                pendingReplyData = null;
             }
         });
         
@@ -535,6 +539,57 @@ async function sendReply(msg) {
         sendBtn.disabled = false;
         sendBtn.textContent = '📤 Send Reply';
     }
+}
+
+// Complete vendor reply after confirmation (either immediately or after pending approval)
+async function completeVendorReply(response, statusEl, sendBtn) {
+    const txid = response?.response?.txnid || 'confirmed';
+    console.log('Reply confirmed with txid:', txid);
+    
+    if (!pendingReplyData) {
+        console.error('completeVendorReply: No pending reply data');
+        return;
+    }
+    
+    // Get UI elements if not passed (called from MDS_PENDING handler)
+    if (!statusEl) statusEl = document.getElementById('reply-status');
+    if (!sendBtn) sendBtn = document.getElementById('send-reply-btn');
+    
+    // Save sent message locally
+    const sentMsg = {
+        id: Date.now().toString(),
+        randomid: pendingReplyData.randomid,
+        ref: pendingReplyData.ref,
+        originalRef: pendingReplyData.ref,
+        originalOrder: pendingReplyData.originalOrder,
+        originalProduct: pendingReplyData.originalProduct,
+        message: pendingReplyData.message,
+        timestamp: Date.now(),
+        type: 'REPLY',
+        direction: 'sent',
+        coinid: txid,
+        buyerPublicKey: pendingReplyData.buyerPublicKey,
+        buyerAddress: pendingReplyData.buyerAddress
+    };
+    
+    currentMessages.unshift(sentMsg);
+    await saveMessageToDb(sentMsg);
+    
+    if (statusEl) {
+        statusEl.textContent = 'Reply sent! TX: ' + txid.substring(0, 20) + '...';
+        statusEl.className = 'reply-status success';
+    }
+    if (sendBtn) {
+        sendBtn.textContent = '✓ Sent!';
+    }
+    
+    pendingReplyData = null;
+    
+    setTimeout(() => {
+        closeReplyModal();
+        closeModal();
+        renderInbox();
+    }, 2000);
 }
 
 // ============ UI FUNCTIONS ============
@@ -890,5 +945,43 @@ MDS.init(async (msg) => {
         scanForMessages();
     } else if (msg.event === 'MDS_TIMER_10SECONDS') {
         scanForMessages();
+    } else if (msg.event === 'MDS_PENDING') {
+        // Handle pending action results by matching UID (Wallet pattern)
+        console.log('MDS_PENDING:', JSON.stringify(msg.data));
+        
+        // Match our pending REPLY by UID
+        if (pendingReplyUid && msg.data && msg.data.uid === pendingReplyUid) {
+            pendingReplyUid = null;
+            const statusEl = document.getElementById('reply-status');
+            const sendBtn = document.getElementById('send-reply-btn');
+            
+            if (msg.data.accept && msg.data.result && msg.data.result.status) {
+                console.log('Reply ACCEPTED and succeeded');
+                await completeVendorReply(msg.data.result, statusEl, sendBtn);
+            } else if (msg.data.accept) {
+                console.log('Reply accepted but FAILED:', msg.data.result?.error);
+                if (statusEl) {
+                    statusEl.textContent = 'Reply failed: ' + (msg.data.result?.error || 'Unknown error');
+                    statusEl.className = 'reply-status error';
+                }
+                if (sendBtn) {
+                    sendBtn.disabled = false;
+                    sendBtn.textContent = '📤 Send Reply';
+                }
+                pendingReplyData = null;
+            } else {
+                console.log('Reply DENIED by user');
+                if (statusEl) {
+                    statusEl.textContent = 'Reply was denied';
+                    statusEl.className = 'reply-status error';
+                }
+                if (sendBtn) {
+                    sendBtn.disabled = false;
+                    sendBtn.textContent = '📤 Send Reply';
+                }
+                pendingReplyData = null;
+            }
+            return;
+        }
     }
 });

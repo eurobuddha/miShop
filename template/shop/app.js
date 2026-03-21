@@ -30,6 +30,12 @@ let vendorPublicKey = null;
 let lastOrderReference = null;
 let buyerPublicKey = null;
 let currentMessages = [];
+let pendingOrderData = null; // Track pending order for when confirmed
+let pendingPaymentData = null; // Track pending payment for when confirmed
+let pendingOrderUid = null; // UID of pending order command
+let pendingPaymentUid = null; // UID of pending payment command
+let pendingReplyData = null; // Track pending reply for when confirmed
+let pendingReplyUid = null; // UID of pending reply command
 
 function escapeSQL(val) {
     if (val == null) return 'NULL';
@@ -112,19 +118,19 @@ async function initDB() {
         // Create tables with all columns
         const createResult = await sqlAsync(
             `CREATE TABLE IF NOT EXISTS messages (` +
-            `id INTEGER PRIMARY KEY AUTOINCREMENT,` +
-            `randomid TEXT UNIQUE,` +
-            `ref TEXT, type TEXT, product TEXT, size TEXT,` +
-            `amount TEXT, currency TEXT, delivery TEXT, shipping TEXT,` +
-            `message TEXT, timestamp INTEGER, coinid TEXT,` +
-            `read INTEGER DEFAULT 0, direction TEXT DEFAULT 'sent',` +
-            `buyerPublicKey TEXT, vendorPublicKey TEXT, vendorAddress TEXT,` +
-            `subject TEXT, originalOrder TEXT)`
+            `id INTEGER PRIMARY KEY AUTO_INCREMENT,` +
+            `randomid VARCHAR(255) UNIQUE,` +
+            `ref VARCHAR(255), type VARCHAR(50), product VARCHAR(500), size VARCHAR(100),` +
+            `amount VARCHAR(50), currency VARCHAR(50), delivery VARCHAR(500), shipping VARCHAR(50),` +
+            `message TEXT, timestamp BIGINT, coinid VARCHAR(255),` +
+            `"read" INTEGER DEFAULT 0, direction VARCHAR(50) DEFAULT 'sent',` +
+            `buyerPublicKey TEXT, vendorPublicKey TEXT, vendorAddress VARCHAR(255),` +
+            `subject VARCHAR(500), originalOrder TEXT)`
         );
         console.log('CREATE messages table result:', JSON.stringify(createResult));
         
         const createSettingsResult = await sqlAsync(
-            `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`
+            `CREATE TABLE IF NOT EXISTS settings ("key" VARCHAR(255) PRIMARY KEY, "value" TEXT)`
         );
         console.log('CREATE settings table result:', JSON.stringify(createSettingsResult));
         
@@ -153,7 +159,7 @@ async function initDB() {
 
 async function saveSetting(key, value) {
     try {
-        await sqlAsync(`INSERT OR REPLACE INTO settings (key, value) VALUES (${escapeSQL(key)}, ${escapeSQL(value)})`);
+        await sqlAsync(`MERGE INTO settings ("key", "value") KEY ("key") VALUES (${escapeSQL(key)}, ${escapeSQL(value)})`);
     } catch (err) {
         console.error('saveSetting error:', err);
     }
@@ -161,9 +167,10 @@ async function saveSetting(key, value) {
 
 async function loadSetting(key) {
     try {
-        const resp = await sqlAsync(`SELECT value FROM settings WHERE key = ${escapeSQL(key)}`);
+        const resp = await sqlAsync(`SELECT "value" FROM settings WHERE "key" = ${escapeSQL(key)}`);
         if (resp && resp.status && resp.rows && resp.rows.length > 0) {
-            return resp.rows[0].value;
+            // H2 returns column names in UPPERCASE
+            return resp.rows[0].VALUE || resp.rows[0].value;
         }
     } catch (err) {
         console.error('loadSetting error:', err);
@@ -187,7 +194,7 @@ async function saveMessageToDb(message) {
         
         const sql = `INSERT INTO messages ` +
             `(randomid, ref, type, product, size, amount, currency, delivery, shipping, message, ` +
-            `timestamp, coinid, read, direction, buyerPublicKey, vendorPublicKey, vendorAddress, ` +
+            `timestamp, coinid, "read", direction, buyerPublicKey, vendorPublicKey, vendorAddress, ` +
             `subject, originalOrder) ` +
             `VALUES (` +
             `${escapeSQL(message.randomid)}, ` +
@@ -221,7 +228,7 @@ async function saveMessageToDb(message) {
 
 async function updateMessageReadStatus(randomid, read) {
     try {
-        const result = await sqlAsync(`UPDATE messages SET read = ${read ? 1 : 0} WHERE randomid = ${escapeSQL(randomid)}`);
+        const result = await sqlAsync(`UPDATE messages SET "read" = ${read ? 1 : 0} WHERE randomid = ${escapeSQL(randomid)}`);
         console.log('updateMessageReadStatus:', randomid, 'read:', read, 'result:', result?.status);
         return result && result.status;
     } catch (err) {
@@ -235,28 +242,35 @@ async function loadMessagesFromDb() {
         const resp = await sqlAsync(`SELECT * FROM messages ORDER BY timestamp DESC`);
         console.log('loadMessagesFromDb: found', resp?.rows?.length || 0, 'messages');
         if (resp && resp.status && resp.rows) {
-            return resp.rows.map(row => ({
-                id: row.id,
-                randomid: row.randomid,
-                ref: row.ref,
-                type: row.type,
-                product: row.product,
-                size: row.size,
-                amount: row.amount,
-                currency: row.currency,
-                delivery: row.delivery,
-                shipping: row.shipping,
-                message: row.message,
-                timestamp: row.timestamp,
-                coinid: row.coinid,
-                read: !!row.read,
-                direction: row.direction,
-                buyerPublicKey: row.buyerPublicKey,
-                vendorPublicKey: row.vendorPublicKey,
-                vendorAddress: row.vendorAddress,
-                subject: row.subject,
-                originalOrder: row.originalOrder
-            }));
+            // H2 database returns column names in UPPERCASE and numbers as strings
+            return resp.rows.map(row => {
+                const ts = row.TIMESTAMP || row.timestamp;
+                const dir = row.DIRECTION || row.direction || 'sent';
+                const rd = row.READ || row.read;
+                console.log('loadMessagesFromDb row:', row.RANDOMID || row.randomid, 'direction:', dir, 'read:', rd);
+                return {
+                    id: row.ID || row.id,
+                    randomid: row.RANDOMID || row.randomid,
+                    ref: row.REF || row.ref,
+                    type: row.TYPE || row.type,
+                    product: row.PRODUCT || row.product,
+                    size: row.SIZE || row.size,
+                    amount: row.AMOUNT || row.amount,
+                    currency: row.CURRENCY || row.currency,
+                    delivery: row.DELIVERY || row.delivery,
+                    shipping: row.SHIPPING || row.shipping,
+                    message: row.MESSAGE || row.message,
+                    timestamp: ts ? parseInt(ts, 10) : Date.now(),
+                    coinid: row.COINID || row.coinid,
+                    read: !!(rd && rd !== '0' && rd !== 0),
+                    direction: dir,
+                    buyerPublicKey: row.BUYERPUBLICKEY || row.buyerPublicKey,
+                    vendorPublicKey: row.VENDORPUBLICKEY || row.vendorPublicKey,
+                    vendorAddress: row.VENDORADDRESS || row.vendorAddress,
+                    subject: row.SUBJECT || row.subject,
+                    originalOrder: row.ORIGINALORDER || row.originalOrder
+                };
+            });
         }
     } catch (err) {
         console.error('loadMessagesFromDb error:', err);
@@ -545,38 +559,36 @@ async function sendBuyerReply() {
         const command = 'send address:' + MINIMERCH_ADDRESS + ' amount:0.0001 tokenid:' + TOKEN_IDS.MINIMA + ' state:' + JSON.stringify(state);
         console.log('Sending buyer reply to MINIMERCH_ADDRESS');
         
+        // Store reply data for pending handling
+        pendingReplyData = {
+            randomid: replyPayload.randomid,
+            ref: msg.ref,
+            product: msg.product || '',
+            message: messageText
+        };
+        
         MDS.cmd(command, async (response) => {
             console.log('Buyer reply TX Response:', JSON.stringify(response));
+            
+            // Check if response is pending (node in read mode)
+            if (response && response.pending) {
+                pendingReplyUid = response.pendinguid;
+                console.log('Reply is PENDING - UID:', pendingReplyUid, '- waiting for user approval');
+                statusEl.textContent = 'Reply pending approval - check Pending Actions';
+                statusEl.className = 'reply-status pending';
+                sendBtn.textContent = '⏳ Pending...';
+                // Don't close modal - user needs to see status
+                return;
+            }
+            
             if (response && response.status) {
-                const txid = response.response?.txnid || 'confirmed';
-                statusEl.textContent = 'Reply sent! TX: ' + txid.substring(0, 20) + '...';
-                statusEl.className = 'reply-status success';
-                sendBtn.textContent = '✓ Sent!';
-                
-                // Save sent message locally
-                const sentMessage = {
-                    id: Date.now().toString(),
-                    randomid: replyPayload.randomid,
-                    ref: msg.ref + '-R',
-                    type: 'BUYER_REPLY',
-                    subject: 'Re: ' + (msg.ref || 'Order'),
-                    product: msg.product || '',
-                    message: messageText,
-                    timestamp: Date.now(),
-                    coinid: txid,
-                    read: true,
-                    direction: 'sent'
-                };
-                await addMessage(sentMessage);
-                
-                setTimeout(() => {
-                    closeBuyerReplyModal();
-                }, 2000);
+                completeReply(response, statusEl, sendBtn);
             } else {
                 statusEl.textContent = 'Failed: ' + (response?.error || 'Transaction failed');
                 statusEl.className = 'reply-status error';
                 sendBtn.disabled = false;
                 sendBtn.textContent = '📤 Send Reply';
+                pendingReplyData = null;
             }
         });
         
@@ -692,67 +704,42 @@ async function processPayment() {
         const command = 'send address:' + MINIMERCH_ADDRESS + ' amount:0.0001 tokenid:' + TOKEN_IDS.MINIMA + ' state:' + JSON.stringify(state);
         console.log('Sending order to MINIMERCH_ADDRESS');
         
-        const orderResponse = await new Promise((resolve) => {
-            MDS.cmd(command, resolve);
-        });
-        
-        if (!orderResponse || !orderResponse.status) {
-            throw new Error(orderResponse?.error || 'Order TX failed');
-        }
-        
-        const orderTxid = orderResponse.response?.txnid || 'confirmed';
-        console.log('Order sent with txid:', orderTxid);
-        
-        // Save sent order locally
-        await addMessage({
-            id: Date.now().toString(),
+        // Store order data in case this goes to pending
+        pendingOrderData = {
             randomid: orderPayload.randomid,
             ref: lastOrderReference,
-            type: 'ORDER',
             product: PRODUCT.name,
             size: sizeLabel,
             amount: totalPrice.toFixed(2),
             currency: tokenName,
             delivery: deliveryInfo,
             shipping: selectedShipping,
-            timestamp: Date.now(),
-            coinid: orderTxid,
-            read: true,
-            direction: 'sent',
-            buyerPublicKey: buyerPublicKey
+            buyerPublicKey: buyerPublicKey,
+            sendAmount: sendAmount
+        };
+        
+        const orderResponse = await new Promise((resolve) => {
+            MDS.cmd(command, resolve);
         });
         
-        showPaymentStatus('Sending payment...', 'pending');
+        console.log('Order Response:', JSON.stringify(orderResponse));
         
-        let payCommand;
-        if (selectedPaymentMethod === 'USDT') {
-            payCommand = 'send address:' + vendorAddress + ' amount:' + sendAmount.toFixed(8) + ' tokenid:' + TOKEN_IDS.USDT;
-        } else {
-            payCommand = 'send address:' + vendorAddress + ' amount:' + sendAmount.toFixed(8) + ' tokenid:' + TOKEN_IDS.MINIMA;
+        // Check if response is pending (node in read mode)
+        if (orderResponse && orderResponse.pending) {
+            pendingOrderUid = orderResponse.pendinguid;
+            console.log('Order is PENDING - UID:', pendingOrderUid, '- waiting for user approval');
+            showPaymentStatus('Order pending approval - check Pending Actions to confirm', 'pending');
+            payBtn.disabled = false;
+            payBtn.querySelector('.btn-text').textContent = '⏳ Pending...';
+            return; // Exit - will continue when MDS_PENDING fires and we check status
         }
         
-        console.log('Payment command:', payCommand);
+        if (!orderResponse || !orderResponse.status) {
+            throw new Error(orderResponse?.error || 'Order TX failed');
+        }
         
-        MDS.cmd(payCommand, (payResponse) => {
-            console.log('Payment Response:', JSON.stringify(payResponse));
-            
-            if (payResponse && payResponse.status) {
-                const txid = payResponse.response?.txnid || 'confirmed';
-                payBtn.querySelector('.btn-text').textContent = '✓ Sent!';
-                payBtn.classList.add('sent');
-                showPaymentStatus('Transaction sent! TX: ' + txid.substring(0, 20) + '...', 'success');
-                
-                setTimeout(() => {
-                    closeModal();
-                    showConfirmation(txid, lastOrderReference);
-                }, 3000);
-            } else {
-                const errorMsg = payResponse?.error || 'Payment may have failed';
-                showPaymentStatus(errorMsg + ' (but order was sent)', 'error');
-                payBtn.disabled = false;
-                payBtn.querySelector('.btn-text').textContent = '💸 Pay Now';
-            }
-        });
+        // Order sent successfully - continue with payment
+        await completeOrderAndPayment(orderResponse, payBtn);
         
     } catch (error) {
         console.error('Payment error:', error);
@@ -771,6 +758,146 @@ async function saveLastPrice(price) {
 async function loadLastPrice() {
     const saved = await loadSetting('minima_last_price');
     return saved ? parseFloat(saved) : DEFAULT_MINIMA_PRICE;
+}
+
+// Complete order after it's confirmed (either immediately or after pending approval)
+async function completeOrderAndPayment(orderResponse, payBtn) {
+    const orderTxid = orderResponse?.response?.txnid || 'confirmed';
+    console.log('Order sent with txid:', orderTxid);
+    
+    if (!pendingOrderData) {
+        console.error('completeOrderAndPayment: No pending order data');
+        return;
+    }
+    
+    // Save sent order locally
+    await addMessage({
+        id: Date.now().toString(),
+        randomid: pendingOrderData.randomid,
+        ref: pendingOrderData.ref,
+        type: 'ORDER',
+        product: pendingOrderData.product,
+        size: pendingOrderData.size,
+        amount: pendingOrderData.amount,
+        currency: pendingOrderData.currency,
+        delivery: pendingOrderData.delivery,
+        shipping: pendingOrderData.shipping,
+        timestamp: Date.now(),
+        coinid: orderTxid,
+        read: true,
+        direction: 'sent',
+        buyerPublicKey: pendingOrderData.buyerPublicKey
+    });
+    
+    showPaymentStatus('Sending payment...', 'pending');
+    
+    let payCommand;
+    if (pendingOrderData.currency === 'USDT') {
+        payCommand = 'send address:' + vendorAddress + ' amount:' + pendingOrderData.sendAmount.toFixed(8) + ' tokenid:' + TOKEN_IDS.USDT;
+    } else {
+        payCommand = 'send address:' + vendorAddress + ' amount:' + pendingOrderData.sendAmount.toFixed(8) + ' tokenid:' + TOKEN_IDS.MINIMA;
+    }
+    
+    // Store payment data for pending handling
+    pendingPaymentData = {
+        ref: pendingOrderData.ref
+    };
+    
+    console.log('Payment command:', payCommand);
+    
+    MDS.cmd(payCommand, (payResponse) => {
+        console.log('Payment Response:', JSON.stringify(payResponse));
+        
+        // Check if payment is pending
+        if (payResponse && payResponse.pending) {
+            pendingPaymentUid = payResponse.pendinguid;
+            console.log('Payment is PENDING - UID:', pendingPaymentUid, '- waiting for user approval');
+            showPaymentStatus('Payment pending approval - check Pending Actions', 'pending');
+            if (payBtn) {
+                payBtn.disabled = false;
+                payBtn.querySelector('.btn-text').textContent = '⏳ Payment Pending...';
+            }
+            return;
+        }
+        
+        if (payResponse && payResponse.status) {
+            completePayment(payResponse, payBtn);
+        } else {
+            const errorMsg = payResponse?.error || 'Payment may have failed';
+            showPaymentStatus(errorMsg + ' (but order was sent)', 'error');
+            if (payBtn) {
+                payBtn.disabled = false;
+                payBtn.querySelector('.btn-text').textContent = '💸 Pay Now';
+            }
+        }
+    });
+    
+    // Clear pending order data after processing
+    pendingOrderData = null;
+}
+
+// Complete payment after confirmation
+function completePayment(payResponse, payBtn) {
+    const txid = payResponse?.response?.txnid || 'confirmed';
+    const ref = pendingPaymentData?.ref || lastOrderReference;
+    
+    if (payBtn) {
+        payBtn.querySelector('.btn-text').textContent = '✓ Sent!';
+        payBtn.classList.add('sent');
+    }
+    showPaymentStatus('Transaction sent! TX: ' + txid.substring(0, 20) + '...', 'success');
+    
+    setTimeout(() => {
+        closeModal();
+        showConfirmation(txid, ref);
+    }, 3000);
+    
+    pendingPaymentData = null;
+}
+
+// Complete reply after confirmation (either immediately or after pending approval)
+async function completeReply(response, statusEl, sendBtn) {
+    const txid = response?.response?.txnid || 'confirmed';
+    console.log('Reply confirmed with txid:', txid);
+    
+    if (!pendingReplyData) {
+        console.error('completeReply: No pending reply data');
+        return;
+    }
+    
+    // Get UI elements if not passed (called from MDS_PENDING handler)
+    if (!statusEl) statusEl = document.getElementById('buyer-reply-status');
+    if (!sendBtn) sendBtn = document.getElementById('buyer-send-reply-btn');
+    
+    // Save sent message locally
+    const sentMessage = {
+        id: Date.now().toString(),
+        randomid: pendingReplyData.randomid,
+        ref: pendingReplyData.ref + '-R',
+        type: 'BUYER_REPLY',
+        subject: 'Re: ' + (pendingReplyData.ref || 'Order'),
+        product: pendingReplyData.product || '',
+        message: pendingReplyData.message,
+        timestamp: Date.now(),
+        coinid: txid,
+        read: true,
+        direction: 'sent'
+    };
+    await addMessage(sentMessage);
+    
+    if (statusEl) {
+        statusEl.textContent = 'Reply sent! TX: ' + txid.substring(0, 20) + '...';
+        statusEl.className = 'reply-status success';
+    }
+    if (sendBtn) {
+        sendBtn.textContent = '✓ Sent!';
+    }
+    
+    pendingReplyData = null;
+    
+    setTimeout(() => {
+        closeBuyerReplyModal();
+    }, 2000);
 }
 
 async function fetchCoinGeckoPrice() {
@@ -1712,5 +1839,82 @@ MDS.init(async (msg) => {
         updatePrices();
     } else if (msg.event === 'MDS_TIMER_10SECONDS') {
         scanForReplies();
+    } else if (msg.event === 'MDS_PENDING') {
+        // Handle pending action results by matching UID (Wallet pattern)
+        console.log('MDS_PENDING:', JSON.stringify(msg.data));
+        const payBtn = document.getElementById('pay-btn');
+        
+        // Match our pending ORDER by UID
+        if (pendingOrderUid && msg.data && msg.data.uid === pendingOrderUid) {
+            pendingOrderUid = null;
+            if (msg.data.accept && msg.data.result && msg.data.result.status) {
+                console.log('Order ACCEPTED and succeeded');
+                showPaymentStatus('Order approved! Sending payment...', 'pending');
+                await completeOrderAndPayment(msg.data.result, payBtn);
+            } else if (msg.data.accept) {
+                console.log('Order accepted but FAILED:', msg.data.result?.error);
+                showPaymentStatus('Order failed: ' + (msg.data.result?.error || 'Unknown error'), 'error');
+                pendingOrderData = null;
+                if (payBtn) { payBtn.disabled = false; payBtn.querySelector('.btn-text').textContent = '💸 Pay Now'; }
+            } else {
+                console.log('Order DENIED by user');
+                showPaymentStatus('Order was denied', 'error');
+                pendingOrderData = null;
+                if (payBtn) { payBtn.disabled = false; payBtn.querySelector('.btn-text').textContent = '💸 Pay Now'; }
+            }
+            return;
+        }
+        
+        // Match our pending PAYMENT by UID  
+        if (pendingPaymentUid && msg.data && msg.data.uid === pendingPaymentUid) {
+            pendingPaymentUid = null;
+            if (msg.data.accept && msg.data.result && msg.data.result.status) {
+                console.log('Payment ACCEPTED and succeeded');
+                completePayment(msg.data.result, payBtn);
+            } else if (msg.data.accept) {
+                showPaymentStatus('Payment failed: ' + (msg.data.result?.error || 'Unknown'), 'error');
+                pendingPaymentData = null;
+            } else {
+                showPaymentStatus('Payment denied (order was still sent)', 'error');
+                pendingPaymentData = null;
+            }
+            if (payBtn) { payBtn.disabled = false; payBtn.querySelector('.btn-text').textContent = '💸 Pay Now'; }
+            return;
+        }
+        
+        // Match our pending REPLY by UID
+        if (pendingReplyUid && msg.data && msg.data.uid === pendingReplyUid) {
+            pendingReplyUid = null;
+            const statusEl = document.getElementById('buyer-reply-status');
+            const sendBtn = document.getElementById('buyer-send-reply-btn');
+            
+            if (msg.data.accept && msg.data.result && msg.data.result.status) {
+                console.log('Reply ACCEPTED and succeeded');
+                await completeReply(msg.data.result, statusEl, sendBtn);
+            } else if (msg.data.accept) {
+                console.log('Reply accepted but FAILED:', msg.data.result?.error);
+                if (statusEl) {
+                    statusEl.textContent = 'Reply failed: ' + (msg.data.result?.error || 'Unknown error');
+                    statusEl.className = 'reply-status error';
+                }
+                if (sendBtn) {
+                    sendBtn.disabled = false;
+                    sendBtn.textContent = '📤 Send Reply';
+                }
+                pendingReplyData = null;
+            } else {
+                console.log('Reply DENIED by user');
+                if (statusEl) {
+                    statusEl.textContent = 'Reply was denied';
+                    statusEl.className = 'reply-status error';
+                }
+                if (sendBtn) {
+                    sendBtn.disabled = false;
+                    sendBtn.textContent = '📤 Send Reply';
+                }
+                pendingReplyData = null;
+            }
+            return;
+        }
     }
 });
