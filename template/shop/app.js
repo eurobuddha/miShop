@@ -108,7 +108,8 @@ async function initDB() {
             `amount TEXT, currency TEXT, delivery TEXT, shipping TEXT,` +
             `message TEXT, timestamp INTEGER, coinid TEXT,` +
             `read INTEGER, direction TEXT,` +
-            `buyerPublicKey TEXT, vendorPublicKey TEXT, vendorAddress TEXT)`
+            `buyerPublicKey TEXT, vendorPublicKey TEXT, vendorAddress TEXT,` +
+            `subject TEXT, originalOrder TEXT)`
         );
         await MDS.sql(
             `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`
@@ -142,10 +143,11 @@ async function loadSetting(key) {
 
 async function saveMessageToDb(message) {
     try {
-        await MDS.sql(
+        const result = await MDS.sql(
             `INSERT OR IGNORE INTO messages ` +
             `(randomid, ref, type, product, size, amount, currency, delivery, shipping, message, ` +
-            `timestamp, coinid, read, direction, buyerPublicKey, vendorPublicKey, vendorAddress) ` +
+            `timestamp, coinid, read, direction, buyerPublicKey, vendorPublicKey, vendorAddress, ` +
+            `subject, originalOrder) ` +
             `VALUES (` +
             `${escapeSQL(message.randomid || generateRandomId())}, ` +
             `${escapeSQL(message.ref || '')}, ${escapeSQL(message.type || 'ORDER')}, ` +
@@ -156,8 +158,10 @@ async function saveMessageToDb(message) {
             `${escapeSQL(message.coinid || '')}, ${message.read ? 1 : 0}, ` +
             `${escapeSQL(message.direction || 'sent')}, ` +
             `${escapeSQL(message.buyerPublicKey || '')}, ` +
-            `${escapeSQL(message.vendorPublicKey || '')}, ${escapeSQL(message.vendorAddress || '')})`
+            `${escapeSQL(message.vendorPublicKey || '')}, ${escapeSQL(message.vendorAddress || '')}, ` +
+            `${escapeSQL(message.subject || '')}, ${escapeSQL(message.originalOrder || '')})`
         );
+        console.log('saveMessageToDb result:', result?.status ? 'success' : 'failed', 'randomid:', message.randomid);
     } catch (err) {
         console.error('saveMessageToDb error:', err);
     }
@@ -166,6 +170,7 @@ async function saveMessageToDb(message) {
 async function loadMessagesFromDb() {
     try {
         const resp = await MDS.sql(`SELECT * FROM messages ORDER BY timestamp DESC`);
+        console.log('loadMessagesFromDb: found', resp?.rows?.length || 0, 'messages');
         if (resp && resp.status && resp.rows) {
             return resp.rows.map(row => ({
                 id: row.id,
@@ -185,7 +190,9 @@ async function loadMessagesFromDb() {
                 direction: row.direction,
                 buyerPublicKey: row.buyerPublicKey,
                 vendorPublicKey: row.vendorPublicKey,
-                vendorAddress: row.vendorAddress
+                vendorAddress: row.vendorAddress,
+                subject: row.subject,
+                originalOrder: row.originalOrder
             }));
         }
     } catch (err) {
