@@ -63,7 +63,7 @@ async function saveSetup(e) {
                 address:       document.getElementById('setup-address').value.trim(),
                 publicKey:     document.getElementById('setup-pubkey').value.trim(),
                 apiKey:        document.getElementById('setup-apikey').value.trim(),
-                inboxPublicKey:document.getElementById('setup-inboxpubkey').value.trim(),
+                inboxPublicKey: '',
             }),
         });
         const data = await res.json();
