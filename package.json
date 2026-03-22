@@ -1,7 +1,7 @@
 {
   "name": "@eurobuddha/mini-merch",
   "version": "0.2.0",
-  "description": "CLI tool to generate miniMerch MiniDapps for the Minima blockchain — sell physical or digital goods with built-in encrypted messaging",
+  "description": "Build multi-product Minima blockchain shops with a visual desktop app (macOS/Windows) or CLI. Up to 8 products, shopping cart, encrypted orders, live Minima pricing.",
   "main": "src/index.js",
   "bin": {
     "mini-merch": "./src/index.js"
@@ -36,8 +36,12 @@
     "minidapp",
     "blockchain",
     "ecommerce",
+    "shop-builder",
+    "desktop-app",
     "messaging",
-    "cli"
+    "cli",
+    "macos",
+    "windows"
   ],
   "author": "eurobuddha",
   "license": "MIT",
