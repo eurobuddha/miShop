@@ -41,12 +41,15 @@ Section "Install"
     ; ── Copy all staged files ─────────────────────────────────────────────────
     File /r "..\release\staging\*.*"
 
-    ; ── Write the launcher batch file ────────────────────────────────────────
-    ; Uses the bundled node.exe — no system Node.js required
-    FileOpen  $0 "$INSTDIR\launch.bat" w
-    FileWrite $0 "@echo off$\r$\n"
-    FileWrite $0 "cd /d $\"%~dp0$\"$\r$\n"
-    FileWrite $0 "start $\"miniMerch Studio$\" $\"%~dp0node.exe$\" $\"%~dp0src\studio.js$\"$\r$\n"
+    ; ── Write the VBScript launcher — runs server with NO visible window ────────
+    ; mshta.exe is built into every Windows version and can run VBScript inline.
+    ; The shortcut calls mshta.exe with this .vbs to launch node.exe silently.
+    FileOpen  $0 "$INSTDIR\launch.vbs" w
+    FileWrite $0 "Dim d$\r$\n"
+    FileWrite $0 "d = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, $\"\\\$\"))$\r$\n"
+    FileWrite $0 "Set sh = CreateObject($\"WScript.Shell$\")$\r$\n"
+    FileWrite $0 "sh.CurrentDirectory = d$\r$\n"
+    FileWrite $0 "sh.Run $\"$\"$\"$\" & d & $\"node.exe$\"$\"$\" & $\" $\"$\"$\" & d & $\"src\\studio.js$\"$\"$\", 0, False$\r$\n"
     FileClose $0
 
     ; ── Write uninstaller ────────────────────────────────────────────────────
@@ -63,14 +66,16 @@ Section "Install"
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify"        1
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair"        1
 
-    ; ── Shortcuts ─────────────────────────────────────────────────────────────
+    ; ── Shortcuts — wscript.exe runs launch.vbs silently (no window) ─────────
     CreateShortcut "$DESKTOP\${APP_NAME}.lnk" \
-        "$INSTDIR\launch.bat" "" \
+        "$WINDIR\System32\wscript.exe" \
+        '"$INSTDIR\launch.vbs"' \
         "$INSTDIR\icon.ico" 0
 
     CreateDirectory "$SMPROGRAMS\${APP_NAME}"
     CreateShortcut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" \
-        "$INSTDIR\launch.bat" "" \
+        "$WINDIR\System32\wscript.exe" \
+        '"$INSTDIR\launch.vbs"' \
         "$INSTDIR\icon.ico" 0
     CreateShortcut "$SMPROGRAMS\${APP_NAME}\Uninstall.lnk" \
         "$INSTDIR\Uninstall.exe"
@@ -81,7 +86,7 @@ Section "Install"
 SectionEnd
 
 Section "Uninstall"
-    ExecWait 'taskkill /F /IM node.exe /FI "WINDOWTITLE eq miniMerch Studio"' $0
+    ExecWait 'taskkill /F /IM node.exe' $0
     RMDir /r "$INSTDIR"
     Delete "$DESKTOP\${APP_NAME}.lnk"
     Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
