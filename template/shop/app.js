@@ -1752,6 +1752,7 @@ function switchView(view) {
     if (view === 'shop') {
         renderShop();
         initApp();
+        initCarousel();
     } else {
         renderInbox();
     }
@@ -1785,6 +1786,72 @@ function setupNavigation() {
     });
 }
 
+// ============ CAROUSEL ============
+
+let currentProductIndex = 0;
+
+function initCarousel() {
+    const total = PRODUCTS.length;
+
+    // Hide arrows and dots if only one product — zero UX change for single-product shops
+    const prevBtn = document.getElementById('carousel-prev');
+    const nextBtn = document.getElementById('carousel-next');
+    const dotsEl  = document.getElementById('carousel-dots');
+
+    if (total <= 1) {
+        if (prevBtn) prevBtn.style.display = 'none';
+        if (nextBtn) nextBtn.style.display = 'none';
+        if (dotsEl)  dotsEl.style.display  = 'none';
+        return;
+    }
+
+    renderCarouselDots();
+
+    if (prevBtn) prevBtn.addEventListener('click', () => navigateProduct(-1));
+    if (nextBtn) nextBtn.addEventListener('click', () => navigateProduct(1));
+
+    // Touch swipe support
+    let touchStartX = 0;
+    const track = document.querySelector('.carousel-track');
+    if (track) {
+        track.addEventListener('touchstart', (e) => {
+            touchStartX = e.changedTouches[0].clientX;
+        }, { passive: true });
+        track.addEventListener('touchend', (e) => {
+            const dx = e.changedTouches[0].clientX - touchStartX;
+            if (Math.abs(dx) > 40) navigateProduct(dx < 0 ? 1 : -1);
+        }, { passive: true });
+    }
+}
+
+function renderCarouselDots() {
+    const dotsEl = document.getElementById('carousel-dots');
+    if (!dotsEl) return;
+    dotsEl.innerHTML = PRODUCTS.map((_, i) =>
+        `<button class="carousel-dot${i === currentProductIndex ? ' active' : ''}" data-index="${i}" aria-label="Product ${i + 1}"></button>`
+    ).join('');
+    dotsEl.querySelectorAll('.carousel-dot').forEach(dot => {
+        dot.addEventListener('click', () => navigateProduct(parseInt(dot.dataset.index) - currentProductIndex));
+    });
+}
+
+function navigateProduct(direction) {
+    const total = PRODUCTS.length;
+    currentProductIndex = (currentProductIndex + direction + total) % total;
+
+    // Update the global PRODUCT alias so all existing logic works unchanged
+    // eslint-disable-next-line no-global-assign
+    PRODUCT = PRODUCTS[currentProductIndex];
+
+    // Reset per-product UI state
+    selectedSize = 'eighth';
+    selectedQuantity = 1;
+
+    renderShop();
+    initApp();
+    renderCarouselDots();
+}
+
 // ============ MDS INITIALIZATION ============
 
 MDS.init(async (msg) => {
@@ -1810,6 +1877,7 @@ MDS.init(async (msg) => {
         setupNavigation();
         renderShop();
         initApp();
+        initCarousel();
         
         // Scan for replies
         setTimeout(() => scanForReplies(), 3000);
