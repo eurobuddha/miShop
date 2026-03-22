@@ -1,14 +1,33 @@
 {
   "name": "@eurobuddha/mini-merch",
   "version": "0.2.0",
-  "description": "CLI tool to generate miniMerch MiniDapps for the Minima blockchain — sell physical or digital goods with built-in encrypted messaging",
+  "description": "Build multi-product Minima blockchain shops with a visual desktop app (macOS/Windows) or CLI. Up to 8 products, shopping cart, encrypted orders, live Minima pricing.",
   "main": "src/index.js",
   "bin": {
     "mini-merch": "./src/index.js"
   },
+  "scripts": {
+    "studio": "node src/studio.js",
+    "build:mac": "bash build/build-mac.sh",
+    "build:win": "bash build/build-win.sh"
+  },
+  "pkg": {
+    "scripts": [
+      "src/**/*.js"
+    ],
+    "assets": [
+      "web/**/*",
+      "template/**/*",
+      "item.jpg",
+      "ticket.jpg"
+    ],
+    "outputPath": "release"
+  },
   "files": [
     "src/",
     "template/",
+    "web/",
+    "build/",
     "item.jpg",
     "ticket.jpg"
   ],
@@ -17,8 +36,12 @@
     "minidapp",
     "blockchain",
     "ecommerce",
+    "shop-builder",
+    "desktop-app",
     "messaging",
-    "cli"
+    "cli",
+    "macos",
+    "windows"
   ],
   "author": "eurobuddha",
   "license": "MIT",
@@ -32,5 +55,10 @@
   "dependencies": {
     "archiver": "^7.0.1",
     "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.14.1",
+    "png-to-ico": "^3.0.1",
+    "resedit": "^3.0.2"
   }
 }
