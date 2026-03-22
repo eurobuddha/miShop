@@ -65,8 +65,7 @@ PKGEOF
 npx @yao-pkg/pkg src/studio.js \
     --config pkg.config.json \
     --targets node22-win-x64 \
-    --output "$OUT_DIR/$BINARY_NAME" \
-    --compress GZip
+    --output "$OUT_DIR/$BINARY_NAME"
 
 rm -f "$PROJECT_DIR/pkg.config.json"
 
