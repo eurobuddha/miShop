@@ -52,12 +52,16 @@ Section "Install"
     ; Copy the icon
     File /oname=icon.ico "..\build\icon.ico"
 
-    ; Write a batch file launcher.
-    ; A .bat with 'start /B' runs the server without leaving a console window open.
-    ; This avoids all VBScript quoting complexity inside NSIS FileWrite.
+    ; Write batch launcher — keeps window visible so errors are shown on first run.
+    ; Once we know it works we can hide the window.
     FileOpen  $0 "$INSTDIR\${APP_LAUNCHER}" w
     FileWrite $0 "@echo off$\r$\n"
-    FileWrite $0 "start $\"$\" $\"%~dp0minimerch-studio.exe$\"$\r$\n"
+    FileWrite $0 "cd /d $\"%~dp0$\"$\r$\n"
+    FileWrite $0 "echo Starting miniMerch Studio...$\r$\n"
+    FileWrite $0 "$\"%~dp0minimerch-studio.exe$\"$\r$\n"
+    FileWrite $0 "echo.$\r$\n"
+    FileWrite $0 "echo Server stopped. Press any key to close.$\r$\n"
+    FileWrite $0 "pause > nul$\r$\n"
     FileClose $0
 
     ; Write uninstaller

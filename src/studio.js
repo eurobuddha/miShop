@@ -295,6 +295,20 @@ function createServer() {
             if (url === '/api/upload-image' && req.method === 'POST') return await handleUploadImage(req, res);
             if (url === '/api/build'  && req.method === 'POST') return await handleBuild(req, res);
 
+            if (url === '/api/debug' && req.method === 'GET') {
+                const webIndex = path.join(WEB_DIR, 'index.html');
+                return jsonResponse(res, 200, {
+                    __dirname,
+                    WEB_DIR,
+                    DIST_DIR,
+                    IS_PKG,
+                    platform: process.platform,
+                    existsWebIndex: fs.existsSync(webIndex),
+                    existsWebStyle: fs.existsSync(path.join(WEB_DIR, 'style.css')),
+                    existsWebApp:   fs.existsSync(path.join(WEB_DIR, 'app.js')),
+                });
+            }
+
             if (url.startsWith('/api/preview/')) {
                 return handlePreview(res, url.replace('/api/preview/', ''));
             }
