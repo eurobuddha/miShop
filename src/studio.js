@@ -368,5 +368,14 @@ function start() {
 
 module.exports = { start };
 
-// Allow running directly
-if (require.main === module) start();
+// Allow running directly.
+// Use both checks: require.main === module (dev) and process.pkg (pkg binary).
+if (require.main === module || process.pkg) {
+    try {
+        start();
+    } catch (e) {
+        console.error('STARTUP ERROR:', e.message);
+        console.error(e.stack);
+        process.exitCode = 1;
+    }
+}

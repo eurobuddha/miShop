@@ -52,16 +52,20 @@ Section "Install"
     ; Copy the icon
     File /oname=icon.ico "..\build\icon.ico"
 
-    ; Write batch launcher — keeps window visible so errors are shown on first run.
-    ; Once we know it works we can hide the window.
+    ; Diagnostic launcher — captures all output to a log file AND shows terminal.
     FileOpen  $0 "$INSTDIR\${APP_LAUNCHER}" w
     FileWrite $0 "@echo off$\r$\n"
     FileWrite $0 "cd /d $\"%~dp0$\"$\r$\n"
+    FileWrite $0 "if not exist $\"%USERPROFILE%\Documents\miniMerch$\" mkdir $\"%USERPROFILE%\Documents\miniMerch$\"$\r$\n"
     FileWrite $0 "echo Starting miniMerch Studio...$\r$\n"
-    FileWrite $0 "$\"%~dp0minimerch-studio.exe$\"$\r$\n"
+    FileWrite $0 "$\"%~dp0minimerch-studio.exe$\" > $\"%USERPROFILE%\Documents\miniMerch\studio.log$\" 2>&1$\r$\n"
     FileWrite $0 "echo.$\r$\n"
-    FileWrite $0 "echo Server stopped. Press any key to close.$\r$\n"
-    FileWrite $0 "pause > nul$\r$\n"
+    FileWrite $0 "echo Exit code: %ERRORLEVEL%$\r$\n"
+    FileWrite $0 "echo.$\r$\n"
+    FileWrite $0 "echo Log saved to: %USERPROFILE%\Documents\miniMerch\studio.log$\r$\n"
+    FileWrite $0 "echo Open that file to see the error.$\r$\n"
+    FileWrite $0 "echo.$\r$\n"
+    FileWrite $0 "pause$\r$\n"
     FileClose $0
 
     ; Write uninstaller
