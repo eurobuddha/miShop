@@ -106,21 +106,13 @@ rm "$OUT_DIR/$BINARY_NAME"
 
 echo "✓  .app bundle created: $APP_DIR"
 
-# ── 5. Ad-hoc sign (prevents "damaged app" error on other Macs) ──────────────
+# ── 5. Create .dmg staging folder ────────────────────────────────────────────
 echo ""
-echo "✍️   Signing app bundle (ad-hoc)..."
-codesign --force --deep --sign - "$APP_DIR" 2>&1
-xattr -cr "$APP_DIR" 2>/dev/null || true
-echo "✓  Signed"
-
-# ── 6. Create .dmg ───────────────────────────────────────────────────────────
-echo ""
-echo "💿  Creating .dmg disk image..."
+echo "💿  Preparing .dmg..."
 
 DMG_NAME="miniMerch-Studio-$VERSION.dmg"
 DMG_PATH="$OUT_DIR/$DMG_NAME"
 
-# Create a temporary folder for DMG contents
 TMP_DMG_DIR="$OUT_DIR/dmg_staging"
 mkdir -p "$TMP_DMG_DIR"
 cp -R "$APP_DIR" "$TMP_DMG_DIR/"
@@ -128,6 +120,20 @@ cp -R "$APP_DIR" "$TMP_DMG_DIR/"
 # Create symlink to /Applications for drag-install
 ln -s /Applications "$TMP_DMG_DIR/Applications"
 
+# ── 6. Sign and strip quarantine AFTER copying into staging ──────────────────
+# Must happen here — quarantine gets re-applied by cp -R, and the DMG
+# must be built from the already-signed, quarantine-free copy.
+echo ""
+echo "✍️   Signing app bundle (ad-hoc)..."
+STAGED_APP="$TMP_DMG_DIR/$APP_NAME.app"
+codesign --force --deep --sign - "$STAGED_APP" 2>&1
+xattr -cr "$STAGED_APP" 2>/dev/null || true
+# Also clear from the original
+codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
+xattr -cr "$APP_DIR" 2>/dev/null || true
+echo "✓  Signed and quarantine cleared"
+
+# ── 7. Create .dmg ───────────────────────────────────────────────────────────
 # Build the DMG
 hdiutil create \
     -volname "miniMerch Studio" \
@@ -140,7 +146,7 @@ rm -rf "$TMP_DMG_DIR"
 
 echo "✓  DMG created: $DMG_PATH"
 
-# ── 7. Summary ────────────────────────────────────────────────────────────────
+# ── 8. Summary ────────────────────────────────────────────────────────────────
 echo ""
 echo "╔═══════════════════════════════════════════════════════════╗"
 echo "║               ✅ Build Complete!                          ║"
