@@ -523,8 +523,11 @@ body {
 .tx-id {
     font-family: 'SF Mono', Monaco, Consolas, monospace;
     color: var(--text-dark);
-    word-break: break-all;
-    margin-left: 0.5rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1;
     font-size: 0.75rem;
 }
 

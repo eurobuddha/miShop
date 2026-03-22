@@ -8,6 +8,13 @@ const TOKEN_IDS = {
 let currentMessages = [];
 let selectedMessage = null;
 let myPublicKey = null;
+
+function extractTxid(response) {
+    return response?.response?.txpowid
+        || response?.response?.txnid
+        || response?.response?.body?.txpowid
+        || null;
+}
 let pollingInterval = null;
 let dbReady = false;
 let pendingReplyData = null; // Track pending reply for when confirmed
@@ -546,7 +553,7 @@ async function sendReply(msg) {
 
 // Complete vendor reply after confirmation (either immediately or after pending approval)
 async function completeVendorReply(response, statusEl, sendBtn) {
-    const txid = response?.response?.txnid || 'confirmed';
+    const txid = extractTxid(response) || '';
     console.log('Reply confirmed with txid:', txid);
     
     if (!pendingReplyData) {

@@ -46,6 +46,15 @@ function escapeSQL(val) {
     return "'" + String(val).replace(/'/g, "''") + "'";
 }
 
+// Extract the real transaction ID from a Minima send response.
+// Minima returns it at response.txpowid (newer nodes) or response.txnid (older).
+function extractTxid(response) {
+    return response?.response?.txpowid
+        || response?.response?.txnid
+        || response?.response?.body?.txpowid
+        || null;
+}
+
 function generateRandomId() {
     return Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 9);
 }
@@ -898,7 +907,7 @@ async function processPayment() {
             delivery: deliveryInfo,
             shipping: selectedShipping,
             timestamp: Date.now(),
-            coinid: orderResponse?.response?.txnid || 'confirmed',
+            coinid: extractTxid(orderResponse) || '',
             read: true,
             direction: 'sent',
             buyerPublicKey: buyerPublicKey,
@@ -958,7 +967,7 @@ async function loadLastPrice() {
 
 // Complete order after it's confirmed (either immediately or after pending approval)
 async function completeOrderAndPayment(orderResponse, payBtn) {
-    const orderTxid = orderResponse?.response?.txnid || 'confirmed';
+    const orderTxid = extractTxid(orderResponse) || '';
     console.log('Order sent with txid:', orderTxid);
     
     if (!pendingOrderData) {
@@ -1035,7 +1044,7 @@ async function completeOrderAndPayment(orderResponse, payBtn) {
 // Stamp the real payment TXID onto the saved ORDER record.
 // Uses MDS.sql directly (non-blocking, no async/await, no currentMessages mutation).
 function stampPaymentTxid(ref, txid) {
-    if (!txid || txid === 'confirmed' || !ref) return;
+    if (!txid || !ref) return;
     const safeRef  = ref.replace(/'/g, "''");
     const safeTxid = txid.replace(/'/g, "''");
     MDS.sql(`UPDATE messages SET coinid = '${safeTxid}' WHERE ref = '${safeRef}'`, (res) => {
@@ -1051,7 +1060,7 @@ function stampPaymentTxid(ref, txid) {
 
 // Complete payment after confirmation
 function completePayment(payResponse, payBtn) {
-    const txid = payResponse?.response?.txnid || 'confirmed';
+    const txid = extractTxid(payResponse) || extractTxid(payResponse?.result) || '';
     const ref = pendingPaymentData?.ref || lastOrderReference;
     
     if (payBtn) {
@@ -1073,7 +1082,7 @@ function completePayment(payResponse, payBtn) {
 
 // Complete reply after confirmation (either immediately or after pending approval)
 async function completeReply(response, statusEl, sendBtn) {
-    const txid = response?.response?.txnid || 'confirmed';
+    const txid = extractTxid(response) || '';
     console.log('Reply confirmed with txid:', txid);
     
     if (!pendingReplyData) {

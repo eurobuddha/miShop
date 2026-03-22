@@ -848,12 +848,15 @@ body {
 .tx-id {
     font-family: 'SF Mono', Monaco, Consolas, monospace;
     font-size: 0.75rem;
-    word-break: break-all;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     background: var(--bg-white);
     padding: 0.5rem;
     border-radius: var(--radius-sm);
     margin-top: 0.5rem;
     border: 1px solid var(--border);
+    min-width: 0;
 }
 
 /* TXID row in inbox detail (buyer's sent orders) */
@@ -880,6 +883,9 @@ body {
     font-size: 0.75rem;
     flex: 1;
     min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .tx-note {
