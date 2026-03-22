@@ -11,7 +11,7 @@ Unicode True
 !define APP_PUBLISHER   "miniMerch"
 !define APP_URL         "https://github.com/eurobuddha/miniMerch"
 !define APP_EXE         "minimerch-studio.exe"
-!define APP_LAUNCHER    "minimerch-launcher.vbs"
+!define APP_LAUNCHER    "minimerch-launcher.bat"
 !define APP_ICON        "icon.ico"
 !define INSTALL_DIR     "$LOCALAPPDATA\${APP_NAME}"
 !define UNINSTALL_KEY   "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
@@ -52,15 +52,12 @@ Section "Install"
     ; Copy the icon
     File /oname=icon.ico "..\build\icon.ico"
 
-    ; Write the VBScript launcher (no terminal window when double-clicked)
-    ; Uses a here-doc approach — write the .vbs from within NSIS
+    ; Write a batch file launcher.
+    ; A .bat with 'start /B' runs the server without leaving a console window open.
+    ; This avoids all VBScript quoting complexity inside NSIS FileWrite.
     FileOpen  $0 "$INSTDIR\${APP_LAUNCHER}" w
-    FileWrite $0 '' ; VBScript to launch miniMerch Studio without a console window$\r$\n'
-    FileWrite $0 'Dim strDir$\r$\n'
-    FileWrite $0 'strDir = Left(WScript.ScriptFullName, InStrRev(WScript.ScriptFullName, "\"))$\r$\n'
-    FileWrite $0 'Dim oShell$\r$\n'
-    FileWrite $0 'Set oShell = CreateObject("WScript.Shell")$\r$\n'
-    FileWrite $0 'oShell.Run """" & strDir & "minimerch-studio.exe""", 0, False$\r$\n'
+    FileWrite $0 "@echo off$\r$\n"
+    FileWrite $0 "start $\"$\" $\"%~dp0minimerch-studio.exe$\"$\r$\n"
     FileClose $0
 
     ; Write uninstaller
@@ -77,17 +74,17 @@ Section "Install"
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify"              1
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair"              1
 
-    ; Desktop shortcut → points to VBScript launcher
+    ; Desktop shortcut — runs the batch launcher via cmd /C (no persistent window)
     CreateShortcut "$DESKTOP\${APP_NAME}.lnk" \
-        "$WINDIR\System32\wscript.exe" \
-        '"$INSTDIR\${APP_LAUNCHER}"' \
+        "$WINDIR\System32\cmd.exe" \
+        '/C "$INSTDIR\${APP_LAUNCHER}"' \
         "$INSTDIR\icon.ico" 0
 
     ; Start Menu shortcut
     CreateDirectory "$SMPROGRAMS\${APP_NAME}"
     CreateShortcut  "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" \
-        "$WINDIR\System32\wscript.exe" \
-        '"$INSTDIR\${APP_LAUNCHER}"' \
+        "$WINDIR\System32\cmd.exe" \
+        '/C "$INSTDIR\${APP_LAUNCHER}"' \
         "$INSTDIR\icon.ico" 0
     CreateShortcut  "$SMPROGRAMS\${APP_NAME}\Uninstall ${APP_NAME}.lnk" \
         "$INSTDIR\Uninstall.exe"
@@ -106,7 +103,7 @@ Section "Uninstall"
 
     ; Remove files
     Delete "$INSTDIR\${APP_EXE}"
-    Delete "$INSTDIR\${APP_LAUNCHER}"
+    Delete "$INSTDIR\minimerch-launcher.bat"
     Delete "$INSTDIR\icon.ico"
     Delete "$INSTDIR\Uninstall.exe"
     RMDir  "$INSTDIR"
