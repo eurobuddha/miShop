@@ -211,6 +211,8 @@ async function handleImageFile(file, card, zone, preview, pholder) {
     reader.readAsDataURL(file);
 
     // Upload to server so it has the file path for building
+    // If the server isn't running yet this will fail — that's ok, preview
+    // still shows and the build will use the default image as fallback.
     try {
         const formData = new FormData();
         formData.append('image', file, file.name);
@@ -219,10 +221,27 @@ async function handleImageFile(file, card, zone, preview, pholder) {
         const data = await res.json();
         if (data.path) {
             card.dataset.imagePath = data.path;
+            // Clear any previous upload warning
+            const warn = card.querySelector('.upload-warn');
+            if (warn) warn.remove();
+        } else {
+            showUploadWarning(card, 'Image preview only — could not save to server.');
         }
-    } catch (err) {
-        console.error('Image upload failed:', err);
+    } catch (_) {
+        // Server not running or network error — preview still shows, build uses default image
+        showUploadWarning(card, 'Studio server not reachable — image preview only, default image will be used in build.');
     }
+}
+
+function showUploadWarning(card, msg) {
+    let warn = card.querySelector('.upload-warn');
+    if (!warn) {
+        warn = document.createElement('p');
+        warn.className = 'upload-warn';
+        warn.style.cssText = 'font-size:0.75rem;color:#e09020;margin-top:0.3rem;';
+        card.querySelector('.card-image-col').appendChild(warn);
+    }
+    warn.textContent = '⚠ ' + msg;
 }
 
 // ── Card drag-to-reorder ──────────────────────────────────────────────────────
@@ -294,12 +313,12 @@ async function buildShop() {
     let valid      = true;
 
     for (const card of cards) {
-        const name   = card.querySelector('.f-name').value.trim();
-        const mode   = card.querySelector('.mode-btn.active').dataset.mode;
-        const price  = parseFloat(card.querySelector('.f-price').value);
-        const qty    = parseFloat(card.querySelector('.f-qty').value);
-        const desc   = card.querySelector('.f-desc').value.trim();
-        const imgPath = card.dataset.imagePath || '';
+        const name      = card.querySelector('.f-name').value.trim();
+        const mode      = card.querySelector('.mode-btn.active').dataset.mode;
+        const price     = parseFloat(card.querySelector('.f-price').value);
+        const qty       = parseFloat(card.querySelector('.f-qty').value);
+        const desc      = card.querySelector('.f-desc').value.trim();
+        const imagePath = card.dataset.imagePath || '';
 
         if (!name) {
             card.querySelector('.f-name').focus();
@@ -321,10 +340,10 @@ async function buildShop() {
             name,
             mode,
             price,
-            units:     mode === 'units'  ? qty : undefined,
-            weight:    mode === 'weight' ? qty : undefined,
+            units:       mode === 'units'  ? qty : undefined,
+            weight:      mode === 'weight' ? qty : undefined,
             description: desc || 'Premium product',
-            imagePath,
+            imagePath,   // server-side path set after upload; empty = use default item.jpg
         });
     }
 
