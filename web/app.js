@@ -405,6 +405,12 @@ function showResult(data) {
         shopName.textContent += `  (${(data.shopSize / 1024).toFixed(1)} KB)`;
     }
 
+    // Update output folder note
+    const noteEl = panel.querySelector('.result-note');
+    if (noteEl && data.distDir) {
+        noteEl.innerHTML = `Files saved to <code>${data.distDir}</code>`;
+    }
+
     panel.classList.remove('hidden');
     panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }

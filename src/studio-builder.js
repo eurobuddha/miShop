@@ -7,10 +7,19 @@
 
 const fs       = require('fs');
 const path     = require('path');
+const os       = require('os');
 const archiver = require('archiver');
 
+// When running as a pkg binary, assets live in the virtual snapshot at __dirname.
+// Output files must go to the real filesystem.
+const IS_PKG = !!process.pkg;
+
+// Template assets are bundled inside the snapshot — always use __dirname
 const SHOP_TEMPLATE_DIR  = path.join(__dirname, '..', 'template', 'shop');
 const INBOX_TEMPLATE_DIR = path.join(__dirname, '..', 'template', 'inbox');
+// Default image — also bundled
+const DEFAULT_ITEM_JPG   = path.join(__dirname, '..', 'item.jpg');
+// Output dir passed in by caller (already resolved to real fs by studio.js)
 
 function ensureDir(d) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); }
 function copyFile(s, d) { if (fs.existsSync(s)) fs.copyFileSync(s, d); }
@@ -173,10 +182,10 @@ async function build(products, imagePaths, slippage, shopName, distDir) {
             if (imgPath && fs.existsSync(imgPath)) {
                 fs.copyFileSync(imgPath, destImage);
             } else {
-                const fallback = path.join(__dirname, '..', 'item.jpg');
-                if (fs.existsSync(fallback)) fs.copyFileSync(fallback, destImage);
-            }
-        });
+        const fallback = DEFAULT_ITEM_JPG;
+            if (fs.existsSync(fallback)) fs.copyFileSync(fallback, destImage);
+        }
+    });
     } else {
         const imgPath   = imagePaths[0];
         const ext       = imgPath ? path.extname(imgPath) : '.jpg';
@@ -184,13 +193,11 @@ async function build(products, imagePaths, slippage, shopName, distDir) {
         if (imgPath && fs.existsSync(imgPath)) {
             fs.copyFileSync(imgPath, destImage);
             if (ext !== '.jpg') {
-                // Patch products.js image filename
                 const pjs = fs.readFileSync(path.join(shopTmp, 'products.js'), 'utf8');
                 fs.writeFileSync(path.join(shopTmp, 'products.js'), pjs.replace('item.jpg', 'item' + ext));
             }
         } else {
-            const fallback = path.join(__dirname, '..', 'item.jpg');
-            if (fs.existsSync(fallback)) copyFile(fallback, path.join(shopTmp, 'item.jpg'));
+            if (fs.existsSync(DEFAULT_ITEM_JPG)) copyFile(DEFAULT_ITEM_JPG, path.join(shopTmp, 'item.jpg'));
         }
     }
 

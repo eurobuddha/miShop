@@ -11,9 +11,17 @@ const os      = require('os');
 const crypto  = require('crypto');
 const { exec } = require('child_process');
 
-const PORT     = 3456;
+const PORT = 3456;
+
+// When running as a pkg binary, __dirname points into the virtual snapshot
+// filesystem where bundled assets live. Output files (dist/, tmp images)
+// must go to the real filesystem.
+const IS_PKG   = !!process.pkg;
+// Assets bundled inside the snapshot (web/, template/, etc.)
 const WEB_DIR  = path.join(__dirname, '..', 'web');
-const DIST_DIR = path.join(process.cwd(), 'dist');
+// Output — ~/Documents/miniMerch/ when pkg, process.cwd()/dist when dev
+const DOCS_DIR = path.join(os.homedir(), 'Documents', 'miniMerch');
+const DIST_DIR = IS_PKG ? path.join(DOCS_DIR, 'dist') : path.join(process.cwd(), 'dist');
 const TMP_IMG  = path.join(os.tmpdir(), 'mini-merch-images');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -235,6 +243,7 @@ async function handleBuild(req, res) {
             inbox:     result.inboxFile,
             shopSize:  result.shopSize,
             inboxSize: result.inboxSize,
+            distDir:   DIST_DIR,
         });
     } catch (e) {
         console.error('Build error:', e);
@@ -297,6 +306,10 @@ function createServer() {
 
 function start() {
     ensureDir(TMP_IMG);
+    ensureDir(DIST_DIR);
+    if (IS_PKG) {
+        console.log(`\n  Output folder: ${DIST_DIR}`);
+    }
     const server = createServer();
     const url    = `http://localhost:${PORT}`;
 
@@ -325,10 +338,12 @@ function start() {
         process.exit(1);
     });
 
-    process.on('SIGINT', () => {
+    const shutdown = () => {
         console.log('\n\nStopping miniMerch Studio...');
         server.close(() => process.exit(0));
-    });
+    };
+    process.on('SIGINT',  shutdown);
+    process.on('SIGTERM', shutdown);  // macOS Dock → Quit sends SIGTERM
 }
 
 module.exports = { start };
