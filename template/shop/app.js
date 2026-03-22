@@ -2004,103 +2004,183 @@ function setupNavigation() {
     document.getElementById('cart-btn').addEventListener('click', openCartModal);
 }
 
-// ============ CAROUSEL / RESPONSIVE GRID ============
+// ============ CAROUSEL / RESPONSIVE PAGED ROW ============
 
-let currentProductIndex = 0;
-let _carouselMode = false;        // true = narrow (1 card visible), false = grid
+let currentProductIndex = 0;  // active card index (used in single/mobile mode)
+let currentPage = 0;           // active page index (used in paged/wide mode)
+let _cardsPerPage = 1;         // how many cards fit in the track at once
+let _totalPages = 1;           // total number of pages
+let _singleCardMode = false;   // true = phone (≤599px), one card at a time
 let _carouselListenersAdded = false;
 
-// matchMedia query — carousel mode below this width
-const CAROUSEL_MQ = window.matchMedia('(max-width: 599px)');
+const CARD_MIN_WIDTH = 240;    // minimum card width in px before we reduce columns
+const GRID_GAP = 20;           // gap between cards in px (matches --grid-gap: 1.25rem)
+const MOBILE_MQ = window.matchMedia('(max-width: 599px)');
 
-function isCarouselMode() {
-    return CAROUSEL_MQ.matches;
+// ── Measurement helpers ──────────────────────────────────────────────────────
+
+function getTrackWidth() {
+    const track = document.querySelector('.carousel-track');
+    return track ? track.getBoundingClientRect().width : window.innerWidth;
 }
 
-function applyLayoutMode() {
-    _carouselMode = isCarouselMode();
+function calcCardsPerPage(trackWidth) {
     const total = PRODUCTS.length;
+    if (total <= 1) return 1;
+    // How many cards of at least CARD_MIN_WIDTH fit with gaps?
+    const maxFit = Math.max(1, Math.floor((trackWidth + GRID_GAP) / (CARD_MIN_WIDTH + GRID_GAP)));
+    return Math.min(maxFit, total);
+}
+
+function calcCardWidth(trackWidth, n) {
+    if (n <= 1) return trackWidth - 2; // slight inset to avoid scroll artifacts
+    // Fill the track exactly: subtract all gaps, divide by count
+    const padding = 2 * 20; // 1.25rem padding each side ≈ 20px
+    const usable = trackWidth - padding;
+    return Math.floor((usable - GRID_GAP * (n - 1)) / n);
+}
+
+// ── Apply correct layout based on current viewport ────────────────────────────
+
+function applyLayoutMode() {
+    const total = PRODUCTS.length;
+    _singleCardMode = MOBILE_MQ.matches;
+
+    const trackWidth = getTrackWidth();
+    _cardsPerPage = _singleCardMode ? 1 : calcCardsPerPage(trackWidth);
+    _totalPages = Math.ceil(total / _cardsPerPage);
+
+    // Clamp currentPage in case viewport grew and pages reduced
+    if (currentPage >= _totalPages) currentPage = _totalPages - 1;
+
+    const cardWidth = calcCardWidth(trackWidth, _cardsPerPage);
+
+    // Set CSS custom property so all cards resize together
+    const grid = document.querySelector('.product-grid');
+    if (grid) {
+        grid.style.setProperty('--card-width', cardWidth + 'px');
+        grid.style.setProperty('--grid-gap', GRID_GAP + 'px');
+    }
+
+    // Show/hide cards for the current page
+    _applyPageVisibility();
+
+    // Show/hide arrows and dots
     const prevBtn = document.getElementById('carousel-prev');
     const nextBtn = document.getElementById('carousel-next');
     const dotsEl  = document.getElementById('carousel-dots');
+    const needNav = _totalPages > 1;
 
-    if (!_carouselMode || total <= 1) {
-        // Grid mode — show all cards, hide carousel chrome
-        document.querySelectorAll('.product-card').forEach(c => c.classList.remove('carousel-hidden'));
-        if (prevBtn) prevBtn.style.display = 'none';
-        if (nextBtn) nextBtn.style.display = 'none';
-        if (dotsEl)  dotsEl.style.display  = 'none';
-    } else {
-        // Carousel mode — show only active card
+    if (prevBtn) prevBtn.style.display = needNav ? '' : 'none';
+    if (nextBtn) nextBtn.style.display = needNav ? '' : 'none';
+    if (dotsEl)  dotsEl.style.display  = needNav ? 'flex' : 'none';
+
+    if (needNav) renderCarouselDots();
+}
+
+function _applyPageVisibility() {
+    const total = PRODUCTS.length;
+    if (_singleCardMode) {
+        // Single-card mobile: show only currentProductIndex
         document.querySelectorAll('.product-card').forEach((c, i) => {
             c.classList.toggle('carousel-hidden', i !== currentProductIndex);
         });
-        if (prevBtn) prevBtn.style.display = '';
-        if (nextBtn) nextBtn.style.display = '';
-        if (dotsEl)  dotsEl.style.display  = '';
-        renderCarouselDots();
+    } else {
+        // Paged row: show cards [page*n … (page+1)*n - 1]
+        const start = currentPage * _cardsPerPage;
+        const end   = start + _cardsPerPage;
+        document.querySelectorAll('.product-card').forEach((c, i) => {
+            c.classList.toggle('carousel-hidden', i < start || i >= end);
+        });
     }
 }
 
-function initCarousel() {
-    const total = PRODUCTS.length;
+// ── Init ──────────────────────────────────────────────────────────────────────
 
-    // Wire arrows and touch once only
-    if (!_carouselListenersAdded && total > 1) {
+function initCarousel() {
+    if (!_carouselListenersAdded) {
         _carouselListenersAdded = true;
 
         const prevBtn = document.getElementById('carousel-prev');
         const nextBtn = document.getElementById('carousel-next');
-        if (prevBtn) prevBtn.addEventListener('click', () => navigateProduct(-1));
-        if (nextBtn) nextBtn.addEventListener('click', () => navigateProduct(1));
+        if (prevBtn) prevBtn.addEventListener('click', () => navigatePage(-1));
+        if (nextBtn) nextBtn.addEventListener('click', () => navigatePage(1));
 
-        // Touch swipe on the track
+        // Touch swipe (mobile + tablet)
         let touchStartX = 0;
         const track = document.querySelector('.carousel-track');
         if (track) {
-            track.addEventListener('touchstart', e => { touchStartX = e.changedTouches[0].clientX; }, { passive: true });
+            track.addEventListener('touchstart', e => {
+                touchStartX = e.changedTouches[0].clientX;
+            }, { passive: true });
             track.addEventListener('touchend', e => {
                 const dx = e.changedTouches[0].clientX - touchStartX;
-                if (Math.abs(dx) > 40) navigateProduct(dx < 0 ? 1 : -1);
+                if (Math.abs(dx) > 40) navigatePage(dx < 0 ? 1 : -1);
             }, { passive: true });
         }
 
-        // Respond to viewport resize
-        CAROUSEL_MQ.addEventListener('change', applyLayoutMode);
+        // ResizeObserver watches the track for width changes
+        if (window.ResizeObserver) {
+            const ro = new ResizeObserver(() => applyLayoutMode());
+            const track2 = document.querySelector('.carousel-track');
+            if (track2) ro.observe(track2);
+        } else {
+            // Fallback for older browsers
+            MOBILE_MQ.addEventListener('change', applyLayoutMode);
+        }
     }
 
     applyLayoutMode();
 }
 
+// ── Navigation ────────────────────────────────────────────────────────────────
+
+function navigatePage(direction) {
+    if (_singleCardMode) {
+        // Mobile: navigate one card at a time
+        const total = PRODUCTS.length;
+        currentProductIndex = (currentProductIndex + direction + total) % total;
+        // eslint-disable-next-line no-global-assign
+        PRODUCT = PRODUCTS[currentProductIndex];
+    } else {
+        // Paged row: navigate one page at a time (wrap around)
+        currentPage = (currentPage + direction + _totalPages) % _totalPages;
+    }
+    _applyPageVisibility();
+    renderCarouselDots();
+}
+
+// Legacy alias — keeps any remaining internal refs working
+function navigateProduct(direction) { navigatePage(direction); }
+
+// ── Dots ──────────────────────────────────────────────────────────────────────
+
 function renderCarouselDots() {
     const dotsEl = document.getElementById('carousel-dots');
     if (!dotsEl) return;
-    dotsEl.innerHTML = PRODUCTS.map((_, i) =>
-        `<button class="carousel-dot${i === currentProductIndex ? ' active' : ''}" data-index="${i}" aria-label="Product ${i + 1}"></button>`
-    ).join('');
+
+    if (_singleCardMode) {
+        // One dot per product
+        dotsEl.innerHTML = PRODUCTS.map((_, i) =>
+            `<button class="carousel-dot${i === currentProductIndex ? ' active' : ''}" data-page="${i}" aria-label="Product ${i + 1}"></button>`
+        ).join('');
+    } else {
+        // One dot per page
+        dotsEl.innerHTML = Array.from({ length: _totalPages }, (_, p) =>
+            `<button class="carousel-dot${p === currentPage ? ' active' : ''}" data-page="${p}" aria-label="Page ${p + 1}"></button>`
+        ).join('');
+    }
+
     dotsEl.querySelectorAll('.carousel-dot').forEach(dot => {
         dot.addEventListener('click', () => {
-            const target = parseInt(dot.dataset.index);
-            navigateProduct(target - currentProductIndex);
+            const target = parseInt(dot.dataset.page);
+            if (_singleCardMode) {
+                navigatePage(target - currentProductIndex);
+            } else {
+                navigatePage(target - currentPage);
+            }
         });
     });
-}
-
-function navigateProduct(direction) {
-    const total = PRODUCTS.length;
-    currentProductIndex = (currentProductIndex + direction + total) % total;
-    // Keep global PRODUCT alias in sync
-    // eslint-disable-next-line no-global-assign
-    PRODUCT = PRODUCTS[currentProductIndex];
-
-    if (_carouselMode) {
-        // Carousel mode: just toggle visibility — no DOM re-render needed
-        document.querySelectorAll('.product-card').forEach((c, i) => {
-            c.classList.toggle('carousel-hidden', i !== currentProductIndex);
-        });
-        renderCarouselDots();
-    }
-    // Grid mode: all cards already visible — nothing to do
 }
 
 // ============ MDS INITIALIZATION ============
