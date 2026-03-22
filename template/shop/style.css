@@ -1019,14 +1019,14 @@ body {
     background: var(--bg-gray);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    padding: 0.2rem 0.45rem;
-    font-size: 0.85rem;
+    padding: 0.25rem 0.35rem;
     cursor: pointer;
-    line-height: 1.4;
+    line-height: 1;
     color: var(--text-medium);
     transition: background 0.15s, color 0.15s, border-color 0.15s;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
 }
 
 .copy-btn:hover {

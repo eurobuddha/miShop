@@ -710,16 +710,25 @@ function setupMessageListeners() {
 }
 
 // ── Copy-to-clipboard helpers ────────────────────────────────────────────────
+const COPY_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const CHECK_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+function truncateTxid(id) {
+    if (!id || id === '-' || id.length <= 16) return id;
+    return id.slice(0, 8) + '…' + id.slice(-6);
+}
+
 function wireCopyBtn(btnId, text) {
     const btn = document.getElementById(btnId);
     if (!btn || !text || text === '-') return;
+    btn.innerHTML = COPY_ICON;
     btn.style.display = 'inline-flex';
     btn.onclick = () => {
         const doFlash = () => {
-            btn.textContent = '✓';
+            btn.innerHTML = CHECK_ICON;
             btn.classList.add('copied');
             setTimeout(() => {
-                btn.textContent = '\u{1F4CB}';
+                btn.innerHTML = COPY_ICON;
                 btn.classList.remove('copied');
             }, 2000);
         };
@@ -738,7 +747,10 @@ function wireCopyBtn(btnId, text) {
 
 function setTxid(fullId) {
     const el = document.getElementById('modal-txid');
-    if (el) el.textContent = fullId || '-';
+    if (el) {
+        el.textContent = truncateTxid(fullId) || '-';
+        el.dataset.full = fullId || '';
+    }
     wireCopyBtn('copy-txid-btn', fullId);
 }
 
@@ -906,12 +918,23 @@ function showMessageDetail(msg) {
     
     const copyBtn = document.getElementById('copy-address-btn');
     copyBtn.style.display = 'block';
+    copyBtn.innerHTML = COPY_ICON + ' <span>Copy Delivery Address</span>';
     copyBtn.onclick = () => {
-        navigator.clipboard.writeText(msg.delivery).then(() => {
-            copyBtn.textContent = '✓ Copied!';
+        const doFlash = () => {
+            copyBtn.innerHTML = CHECK_ICON + ' <span>Copied!</span>';
             setTimeout(() => {
-                copyBtn.textContent = '📋 Copy Delivery Address';
+                copyBtn.innerHTML = COPY_ICON + ' <span>Copy Delivery Address</span>';
             }, 2000);
+        };
+        navigator.clipboard.writeText(msg.delivery).then(doFlash).catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = msg.delivery;
+            ta.style.cssText = 'position:fixed;opacity:0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            doFlash();
         });
     };
     

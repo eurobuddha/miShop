@@ -1517,34 +1517,37 @@ function hidePaymentStatus() {
 }
 
 // ── Copy-to-clipboard helper ─────────────────────────────────────────────────
+const COPY_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const CHECK_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+function truncateTxid(id) {
+    if (!id || id === '-' || id === 'Pending...' || id.length <= 16) return id;
+    return id.slice(0, 8) + '…' + id.slice(-6);
+}
+
 function wireCopyBtn(btnId, text) {
     const btn = document.getElementById(btnId);
-    if (!btn || !text || text === 'Pending...') return;
+    if (!btn || !text || text === 'Pending...' || text === '-') return;
+    btn.innerHTML = COPY_ICON;
     btn.style.display = 'inline-flex';
     btn.onclick = () => {
-        navigator.clipboard.writeText(text).then(() => {
-            btn.textContent = '✓';
+        const doFlash = () => {
+            btn.innerHTML = CHECK_ICON;
             btn.classList.add('copied');
             setTimeout(() => {
-                btn.textContent = '\u{1F4CB}';
+                btn.innerHTML = COPY_ICON;
                 btn.classList.remove('copied');
             }, 2000);
-        }).catch(() => {
-            // Fallback for browsers without clipboard API
+        };
+        navigator.clipboard.writeText(text).then(doFlash).catch(() => {
             const ta = document.createElement('textarea');
             ta.value = text;
-            ta.style.position = 'fixed';
-            ta.style.opacity = '0';
+            ta.style.cssText = 'position:fixed;opacity:0';
             document.body.appendChild(ta);
             ta.select();
             document.execCommand('copy');
             document.body.removeChild(ta);
-            btn.textContent = '✓';
-            btn.classList.add('copied');
-            setTimeout(() => {
-                btn.textContent = '\u{1F4CB}';
-                btn.classList.remove('copied');
-            }, 2000);
+            doFlash();
         });
     };
 }
@@ -1553,8 +1556,8 @@ function showConfirmation(txid, orderRef) {
     const fullTxid = txid || 'Pending...';
     const fullRef  = orderRef || lastOrderReference || 'N/A';
 
-    document.getElementById('tx-id').textContent    = fullTxid;
-    document.getElementById('order-ref').textContent = fullRef;
+    document.getElementById('tx-id').textContent    = truncateTxid(fullTxid);
+    document.getElementById('order-ref').textContent = truncateTxid(fullRef);
 
     // Wire copy buttons
     wireCopyBtn('copy-txid-btn',    fullTxid);
@@ -1849,14 +1852,14 @@ function renderMessageDetail(msg) {
             <div class="message-tx">
                 <span class="tx-label">TX ID:</span>
                 <div class="tx-copy-row">
-                    <span class="tx-id" id="detail-txid">${msg.coinid}</span>
-                    <button class="copy-btn" id="detail-copy-txid-btn" title="Copy transaction ID">&#128203;</button>
+                    <span class="tx-id" id="detail-txid" data-full="${msg.coinid}">${truncateTxid(msg.coinid)}</span>
+                    <button class="copy-btn" id="detail-copy-txid-btn" title="Copy transaction ID"></button>
                 </div>
             </div>
             ` : ''}
         `;
     }
-    
+
     // Sent ORDER
     if (!isReceived) {
         return `
@@ -1901,14 +1904,14 @@ function renderMessageDetail(msg) {
             <div class="message-tx">
                 <span class="tx-label">TX ID:</span>
                 <div class="tx-copy-row">
-                    <span class="tx-id" id="detail-txid">${msg.coinid}</span>
-                    <button class="copy-btn" id="detail-copy-txid-btn" title="Copy transaction ID">&#128203;</button>
+                    <span class="tx-id" id="detail-txid" data-full="${msg.coinid}">${truncateTxid(msg.coinid)}</span>
+                    <button class="copy-btn" id="detail-copy-txid-btn" title="Copy transaction ID"></button>
                 </div>
             </div>
             ` : ''}
         `;
     }
-    
+
     // Default: received message (should not reach here normally)
     return `
         <button class="back-btn" id="back-to-list">← Back</button>
@@ -1976,7 +1979,7 @@ function setupDetailEventListeners() {
     // Wire TXID copy button if present in the detail view
     const txidEl = document.getElementById('detail-txid');
     if (txidEl) {
-        wireCopyBtn('detail-copy-txid-btn', txidEl.textContent);
+        wireCopyBtn('detail-copy-txid-btn', txidEl.dataset.full || txidEl.textContent);
     }
     
     // Mark as Read button
