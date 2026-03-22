@@ -1822,7 +1822,7 @@ function renderMessageDetail(msg) {
                 <h3>📤 Sent Reply</h3>
                 <span class="message-direction">📤 Sent</span>
             </div>
-            
+
             <div class="message-info">
                 <div class="info-row">
                     <span class="info-label">Order Ref:</span>
@@ -1839,11 +1839,21 @@ function renderMessageDetail(msg) {
                     <span class="info-value">${new Date(msg.timestamp).toLocaleString()}</span>
                 </div>
             </div>
-            
+
             <div class="reply-content">
                 <h4>Your Message:</h4>
                 <p class="reply-message">${msg.message}</p>
             </div>
+
+            ${msg.coinid ? `
+            <div class="message-tx">
+                <span class="tx-label">TX ID:</span>
+                <div class="tx-copy-row">
+                    <span class="tx-id" id="detail-txid">${msg.coinid}</span>
+                    <button class="copy-btn" id="detail-copy-txid-btn" title="Copy transaction ID">&#128203;</button>
+                </div>
+            </div>
+            ` : ''}
         `;
     }
     
@@ -1855,7 +1865,7 @@ function renderMessageDetail(msg) {
                 <h3>📤 ${msg.subject || msg.product || 'Order: ' + msg.ref}</h3>
                 <span class="message-direction">📤 Sent</span>
             </div>
-            
+
             <div class="message-info">
                 <div class="info-row">
                     <span class="info-label">Order Ref:</span>
@@ -1886,6 +1896,16 @@ function renderMessageDetail(msg) {
                     <span class="info-value">${msg.delivery || 'N/A'}</span>
                 </div>
             </div>
+
+            ${msg.coinid ? `
+            <div class="message-tx">
+                <span class="tx-label">TX ID:</span>
+                <div class="tx-copy-row">
+                    <span class="tx-id" id="detail-txid">${msg.coinid}</span>
+                    <button class="copy-btn" id="detail-copy-txid-btn" title="Copy transaction ID">&#128203;</button>
+                </div>
+            </div>
+            ` : ''}
         `;
     }
     
@@ -1951,6 +1971,12 @@ function setupDetailEventListeners() {
             document.getElementById('inbox-list').classList.remove('hidden');
             renderInbox(); // Re-render to update counts
         });
+    }
+
+    // Wire TXID copy button if present in the detail view
+    const txidEl = document.getElementById('detail-txid');
+    if (txidEl) {
+        wireCopyBtn('detail-copy-txid-btn', txidEl.textContent);
     }
     
     // Mark as Read button
