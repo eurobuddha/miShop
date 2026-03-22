@@ -9,8 +9,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERSION="0.2.0"
-BINARY_NAME="minimerch-studio.exe"
+NODE_VERSION="22.14.0"    # LTS
+NODE_ZIP="node-v${NODE_VERSION}-win-x64.zip"
+NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_ZIP}"
 OUT_DIR="$PROJECT_DIR/release"
+STAGING="$OUT_DIR/staging"
 
 echo ""
 echo "╔═══════════════════════════════════════════════════════════╗"
@@ -19,111 +22,127 @@ echo "╚═══════════════════════�
 echo ""
 
 # ── 1. Check prerequisites ────────────────────────────────────────────────────
-if ! command -v node &> /dev/null; then
-    echo "❌  Node.js not found. Please install Node.js 18+ first."
-    exit 1
-fi
-
 if ! command -v makensis &> /dev/null; then
-    echo "❌  makensis not found."
-    echo "    Install NSIS with: brew install nsis"
-    echo "    Then re-run: npm run build:win"
+    echo "❌  makensis not found. Install with: brew install nsis"
     exit 1
 fi
 
 cd "$PROJECT_DIR"
 
-# Install @yao-pkg/pkg if not present
-if ! npx --no-install @yao-pkg/pkg --version &> /dev/null 2>&1; then
-    echo "📦  Installing @yao-pkg/pkg..."
-    npm install --save-dev @yao-pkg/pkg
-fi
-
-# ── 2. Clean previous release ────────────────────────────────────────────────
+# ── 2. Clean ──────────────────────────────────────────────────────────────────
 rm -rf "$OUT_DIR"
-mkdir -p "$OUT_DIR"
+mkdir -p "$OUT_DIR" "$STAGING"
 echo "✓  Output directory: $OUT_DIR"
 
-# ── 3. Compile Windows .exe with pkg ──────────────────────────────────────────
+# ── 3. Download portable Node.js for Windows ──────────────────────────────────
 echo ""
-echo "🔨  Cross-compiling Windows binary (downloads Node win-x64 on first run)..."
+echo "📥  Downloading portable Node.js ${NODE_VERSION} for Windows..."
+NODE_CACHE="$SCRIPT_DIR/.node-win-cache"
+mkdir -p "$NODE_CACHE"
 
-cat > "$PROJECT_DIR/pkg.config.json" << 'PKGEOF'
-{
-  "pkg": {
-    "scripts": ["src/**/*.js"],
-    "assets": [
-      "web/**/*",
-      "template/**/*",
-      "item.jpg",
-      "ticket.jpg"
-    ]
-  }
-}
-PKGEOF
-
-npx @yao-pkg/pkg src/studio.js \
-    --config pkg.config.json \
-    --targets node22-win-x64 \
-    --output "$OUT_DIR/$BINARY_NAME"
-
-rm -f "$PROJECT_DIR/pkg.config.json"
-
-echo "✓  Binary compiled: $OUT_DIR/$BINARY_NAME"
-
-# ── 4. Embed icon + metadata into the .exe ────────────────────────────────────
-echo ""
-echo "🎨  Embedding icon and metadata into .exe..."
-
-# Generate icon.ico if not already present or is stale
-# Requires ImageMagick (brew install imagemagick) or uses existing file
-if [ ! -f "$SCRIPT_DIR/icon.ico" ] || [ "$(xxd "$SCRIPT_DIR/icon.ico" | head -1 | grep -c 'MS Win')" = "0" ]; then
-    if command -v magick &> /dev/null || command -v convert &> /dev/null; then
-        echo "    Generating icon.ico..."
-        for size in 16 32 48 64 128 256; do
-            sips -z $size $size "$PROJECT_DIR/template/shop/icon.png" --out "/tmp/icon_${size}.png" 2>/dev/null
-        done
-        MAGICK_CMD="magick"
-        command -v magick &> /dev/null || MAGICK_CMD="convert"
-        $MAGICK_CMD /tmp/icon_16.png /tmp/icon_32.png /tmp/icon_48.png /tmp/icon_64.png /tmp/icon_128.png /tmp/icon_256.png "$SCRIPT_DIR/icon.ico" 2>/dev/null
-        rm -f /tmp/icon_{16,32,48,64,128,256}.png
-        echo "    ✓ icon.ico generated"
-    else
-        echo "    ⚠ ImageMagick not found — using existing icon.ico"
-        echo "      Install with: brew install imagemagick"
-    fi
+if [ ! -f "$NODE_CACHE/$NODE_ZIP" ]; then
+    curl -L --progress-bar "$NODE_URL" -o "$NODE_CACHE/$NODE_ZIP"
+    echo "✓  Downloaded: $NODE_ZIP"
+else
+    echo "✓  Using cached: $NODE_ZIP"
 fi
 
-echo "✓  Executable ready"
+# Extract node.exe from the zip
+echo "    Extracting node.exe..."
+unzip -p "$NODE_CACHE/$NODE_ZIP" "node-v${NODE_VERSION}-win-x64/node.exe" > "$STAGING/node.exe"
+echo "✓  node.exe extracted"
 
-# ── 5. Build NSIS installer ───────────────────────────────────────────────────
+# ── 4. Stage app source files ─────────────────────────────────────────────────
 echo ""
-echo "📦  Building Windows installer with NSIS..."
+echo "📦  Staging app source files..."
 
-# NSIS needs to run from the build/ directory so relative paths work
+mkdir -p "$STAGING/src"
+mkdir -p "$STAGING/web"
+mkdir -p "$STAGING/template/shop"
+mkdir -p "$STAGING/template/inbox"
+
+# Copy source files
+cp "$PROJECT_DIR/src/studio.js"         "$STAGING/src/"
+cp "$PROJECT_DIR/src/studio-builder.js" "$STAGING/src/"
+cp "$PROJECT_DIR/src/setup.js"          "$STAGING/src/"
+
+# Copy web UI
+cp "$PROJECT_DIR/web/index.html"  "$STAGING/web/"
+cp "$PROJECT_DIR/web/style.css"   "$STAGING/web/"
+cp "$PROJECT_DIR/web/app.js"      "$STAGING/web/"
+
+# Copy templates
+cp -r "$PROJECT_DIR/template/shop/"  "$STAGING/template/shop/"
+cp -r "$PROJECT_DIR/template/inbox/" "$STAGING/template/inbox/"
+
+# Copy default image and package.json (needed for archiver require resolve)
+cp "$PROJECT_DIR/item.jpg"       "$STAGING/"
+[ -f "$PROJECT_DIR/ticket.jpg" ] && cp "$PROJECT_DIR/ticket.jpg" "$STAGING/"
+
+# Copy dependencies (archiver + commander)
+mkdir -p "$STAGING/node_modules"
+cp -r "$PROJECT_DIR/node_modules/archiver"          "$STAGING/node_modules/" 2>/dev/null || true
+cp -r "$PROJECT_DIR/node_modules/archiver-utils"    "$STAGING/node_modules/" 2>/dev/null || true
+cp -r "$PROJECT_DIR/node_modules/async"             "$STAGING/node_modules/" 2>/dev/null || true
+cp -r "$PROJECT_DIR/node_modules/buffer-crc32"      "$STAGING/node_modules/" 2>/dev/null || true
+cp -r "$PROJECT_DIR/node_modules/readable-stream"   "$STAGING/node_modules/" 2>/dev/null || true
+cp -r "$PROJECT_DIR/node_modules/readdir-glob"      "$STAGING/node_modules/" 2>/dev/null || true
+cp -r "$PROJECT_DIR/node_modules/glob"              "$STAGING/node_modules/" 2>/dev/null || true
+cp -r "$PROJECT_DIR/node_modules/zip-stream"        "$STAGING/node_modules/" 2>/dev/null || true
+cp -r "$PROJECT_DIR/node_modules/compress-commons"  "$STAGING/node_modules/" 2>/dev/null || true
+cp -r "$PROJECT_DIR/node_modules/crc-32"            "$STAGING/node_modules/" 2>/dev/null || true
+cp -r "$PROJECT_DIR/node_modules/commander"         "$STAGING/node_modules/" 2>/dev/null || true
+cp -r "$PROJECT_DIR/node_modules/lazystream"        "$STAGING/node_modules/" 2>/dev/null || true
+cp -r "$PROJECT_DIR/node_modules/lodash"            "$STAGING/node_modules/" 2>/dev/null || true
+cp -r "$PROJECT_DIR/node_modules/normalize-path"    "$STAGING/node_modules/" 2>/dev/null || true
+
+# Write a minimal package.json so Node can resolve modules
+cat > "$STAGING/package.json" << 'PKGJSON'
+{ "name": "minimerch-studio", "version": "0.2.0", "main": "src/studio.js" }
+PKGJSON
+
+echo "✓  App files staged"
+
+# ── 5. Generate icon.ico ──────────────────────────────────────────────────────
+echo ""
+echo "🎨  Generating icon..."
+if [ ! -f "$SCRIPT_DIR/icon.ico" ]; then
+    for size in 16 32 48 64 128 256; do
+        sips -z $size $size "$PROJECT_DIR/template/shop/icon.png" --out "/tmp/icon_${size}.png" 2>/dev/null
+    done
+    MAGICK_CMD="magick"
+    command -v magick &> /dev/null || MAGICK_CMD="convert"
+    $MAGICK_CMD /tmp/icon_16.png /tmp/icon_32.png /tmp/icon_48.png /tmp/icon_64.png /tmp/icon_128.png /tmp/icon_256.png "$SCRIPT_DIR/icon.ico" 2>/dev/null
+    rm -f /tmp/icon_{16,32,48,64,128,256}.png
+fi
+cp "$SCRIPT_DIR/icon.ico" "$STAGING/icon.ico"
+echo "✓  icon.ico ready"
+
+# ── 6. Build NSIS installer ───────────────────────────────────────────────────
+echo ""
+echo "🔨  Building NSIS installer..."
+
 cd "$SCRIPT_DIR"
 makensis installer.nsi
 cd "$PROJECT_DIR"
 
-INSTALLER_NAME="miniMerch-Studio-$VERSION-Setup.exe"
-echo "✓  Installer created: $OUT_DIR/$INSTALLER_NAME"
+INSTALLER="miniMerch-Studio-$VERSION-Setup.exe"
+rm -rf "$STAGING"
+echo "✓  Installer: $OUT_DIR/$INSTALLER"
 
-# Clean up loose binary (it's inside the installer now)
-rm -f "$OUT_DIR/$BINARY_NAME"
-
-# ── 6. Summary ────────────────────────────────────────────────────────────────
+# ── 7. Summary ────────────────────────────────────────────────────────────────
+SIZE=$(du -sh "$OUT_DIR/$INSTALLER" | cut -f1)
 echo ""
 echo "╔═══════════════════════════════════════════════════════════╗"
 echo "║               ✅ Build Complete!                          ║"
 echo "╠═══════════════════════════════════════════════════════════╣"
-printf "║  🪟 Installer: %-44s║\n" "$INSTALLER_NAME"
-printf "║  📁 In:        %-44s║\n" "release/"
+printf "║  🪟 %-55s║\n" "$INSTALLER  ($SIZE)"
+printf "║  📁 %-55s║\n" "release/"
 echo "╠═══════════════════════════════════════════════════════════╣"
 echo "║  To install on Windows:                                   ║"
-echo "║    1. Copy installer to Windows machine                   ║"
-echo "║    2. Double-click the .exe                               ║"
-echo "║    3. SmartScreen: click 'More info' → 'Run anyway'       ║"
-echo "║    4. One-click install, no admin needed                  ║"
-echo "║    5. Use the desktop shortcut to launch                  ║"
+echo "║    1. Double-click the Setup.exe                          ║"
+echo "║    2. SmartScreen → More info → Run anyway                ║"
+echo "║    3. One-click install — no admin, no Node.js needed     ║"
+echo "║    4. Desktop shortcut launches the Studio                ║"
 echo "╚═══════════════════════════════════════════════════════════╝"
 echo ""
