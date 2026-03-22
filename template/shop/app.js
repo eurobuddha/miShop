@@ -6,7 +6,7 @@ const TOKEN_IDS = {
     MINIMA: '0x00'
 };
 
-const DEFAULT_MINIMA_PRICE = 0.004;
+const DEFAULT_MINIMA_PRICE = 0.0052; // updated Mar 2026
 
 const SHIPPING_RATES = {
     uk: 5,
@@ -37,9 +37,22 @@ let pendingPaymentUid = null; // UID of pending payment command
 let pendingReplyData = null; // Track pending reply for when confirmed
 let pendingReplyUid = null; // UID of pending reply command
 
+// ── Cart state ──────────────────────────────────────────────────────────────
+// Each item: { productName, productIndex, sizeId, sizeLabel, quantity, unitPrice, lineTotal, mode, image }
+let cart = [];
+
 function escapeSQL(val) {
     if (val == null) return 'NULL';
     return "'" + String(val).replace(/'/g, "''") + "'";
+}
+
+// Extract the real transaction ID from a Minima send response.
+// Minima returns it at response.txpowid (newer nodes) or response.txnid (older).
+function extractTxid(response) {
+    return response?.response?.txpowid
+        || response?.response?.txnid
+        || response?.response?.body?.txpowid
+        || null;
 }
 
 function generateRandomId() {
@@ -601,46 +614,190 @@ async function sendBuyerReply() {
     }
 }
 
+// ============ CART ============
+
+function cartItemsSubtotal() {
+    return cart.reduce((sum, item) => sum + item.lineTotal, 0);
+}
+
+function cartHasPhysicalItem() {
+    // All products are physical unless their shipping is forced digital elsewhere.
+    // We determine this at checkout time based on user's shipping choice.
+    // Here we just always allow the physical shipping option — the fee logic
+    // lives in cartShippingFee().
+    return true;
+}
+
+function cartShippingFee() {
+    if (selectedShipping === 'digital') return 0;
+    if (selectedShipping === 'uk') return 5;
+    if (selectedShipping === 'intl') return 20;
+    return 0;
+}
+
+function cartGrandTotal() {
+    return cartItemsSubtotal() + cartShippingFee();
+}
+
+function updateCartBadge() {
+    const badge = document.getElementById('cart-badge');
+    if (!badge) return;
+    const totalQty = cart.reduce((sum, item) => sum + item.quantity, 0);
+    badge.textContent = totalQty;
+    badge.classList.toggle('hidden', totalQty === 0);
+}
+
+function addToCartByIndex(i) {
+    const p = PRODUCTS[i];
+    const state = getCardState(i);
+    let sizeId, sizeLabel, unitPrice;
+
+    if (p.mode === 'units') {
+        sizeId = 'units_' + state.selectedQuantity;
+        sizeLabel = `${state.selectedQuantity} unit${state.selectedQuantity > 1 ? 's' : ''}`;
+        unitPrice = p.pricePerUnit;
+    } else {
+        sizeId = state.selectedSize;
+        const size = p.sizes.find(s => s.id === state.selectedSize);
+        sizeLabel = `${size.name} (${size.weight}g)`;
+        unitPrice = p.pricePerGram * size.weight;
+    }
+
+    // Increment quantity if same product+size already in cart
+    const existing = cart.find(item => item.productName === p.name && item.sizeId === sizeId);
+    if (existing) {
+        existing.quantity += (p.mode === 'units' ? state.selectedQuantity : 1);
+        existing.lineTotal = existing.unitPrice * existing.quantity;
+    } else {
+        cart.push({
+            productName: p.name,
+            productIndex: i,
+            sizeId,
+            sizeLabel,
+            quantity: p.mode === 'units' ? state.selectedQuantity : 1,
+            unitPrice,
+            lineTotal: unitPrice * (p.mode === 'units' ? state.selectedQuantity : 1),
+            mode: p.mode,
+            image: p.image
+        });
+    }
+
+    updateCartBadge();
+
+    // Flash the button
+    const btn = document.getElementById(`buy-btn-${i}`);
+    if (btn) {
+        btn.querySelector('.btn-text').textContent = '✓ Added!';
+        btn.classList.add('added');
+        setTimeout(() => {
+            btn.querySelector('.btn-text').textContent = '+ Add to Cart';
+            btn.classList.remove('added');
+        }, 1200);
+    }
+}
+
+// Legacy alias kept for any remaining internal references
+function addToCart() { addToCartByIndex(currentProductIndex); }
+
+function openCartModal() {
+    const modal = document.getElementById('cart-modal');
+    const emptyEl = document.getElementById('cart-empty');
+    const listEl = document.getElementById('cart-items-list');
+    const totalsEl = document.getElementById('cart-totals');
+    const actionsEl = document.getElementById('cart-actions');
+    const subtotalEl = document.getElementById('cart-items-subtotal');
+
+    if (cart.length === 0) {
+        emptyEl.classList.remove('hidden');
+        listEl.innerHTML = '';
+        totalsEl.classList.add('hidden');
+        actionsEl.classList.add('hidden');
+    } else {
+        emptyEl.classList.add('hidden');
+        listEl.innerHTML = cart.map((item, idx) => `
+            <div class="cart-item" data-index="${idx}">
+                <div class="cart-item-info">
+                    <span class="cart-item-name">${item.productName}</span>
+                    <span class="cart-item-detail">${item.sizeLabel}${item.quantity > 1 && item.mode !== 'units' ? ' &times; ' + item.quantity : ''}</span>
+                </div>
+                <div class="cart-item-right">
+                    <span class="cart-item-price">$${item.lineTotal.toFixed(2)}</span>
+                    <button class="cart-remove-btn" data-index="${idx}" aria-label="Remove">&times;</button>
+                </div>
+            </div>
+        `).join('');
+        subtotalEl.textContent = `$${cartItemsSubtotal().toFixed(2)} USDT`;
+        totalsEl.classList.remove('hidden');
+        actionsEl.classList.remove('hidden');
+    }
+
+    modal.classList.remove('hidden');
+
+    // Wire remove buttons
+    listEl.querySelectorAll('.cart-remove-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const idx = parseInt(btn.dataset.index);
+            cart.splice(idx, 1);
+            updateCartBadge();
+            openCartModal(); // re-render
+        });
+    });
+
+    document.getElementById('cart-clear-btn').onclick = () => {
+        cart = [];
+        updateCartBadge();
+        openCartModal();
+    };
+
+    document.getElementById('cart-checkout-btn').onclick = () => {
+        closeCartModal();
+        openCheckoutModal();
+    };
+
+    document.getElementById('cart-modal-close').onclick = closeCartModal;
+    modal.addEventListener('click', (e) => { if (e.target === modal) closeCartModal(); });
+}
+
+function closeCartModal() {
+    document.getElementById('cart-modal').classList.add('hidden');
+}
+
 // ============ PAYMENT PROCESSING ============
 
 async function processPayment() {
+    if (cart.length === 0) {
+        showPaymentStatus('Your cart is empty', 'error');
+        return;
+    }
+
     const postalAddress = document.getElementById('postal-address').value.trim();
     const emailAddress = document.getElementById('email-address').value.trim();
-    const isUnitsMode = PRODUCT.mode === 'units';
-    let productPrice;
-    let sizeLabel;
-    
-    if (isUnitsMode) {
-        productPrice = PRODUCT.pricePerUnit * selectedQuantity;
-        sizeLabel = `${selectedQuantity} unit${selectedQuantity > 1 ? 's' : ''}`;
-    } else {
-        const size = PRODUCT.sizes.find(s => s.id === selectedSize);
-        productPrice = PRODUCT.pricePerGram * size.weight;
-        sizeLabel = `${size.name} (${size.weight}g)`;
-    }
-    
-    const totalPrice = productPrice + shippingFee;
-    
-    let deliveryInfo;
+
+    // Validate delivery info
     if (selectedShipping === 'digital') {
         if (!emailAddress.includes('@')) {
             showPaymentStatus('Please enter a valid email address', 'error');
             return;
         }
-        deliveryInfo = emailAddress;
     } else {
         if (postalAddress.length < 10) {
             showPaymentStatus('Please enter a complete postal address', 'error');
             return;
         }
-        deliveryInfo = postalAddress;
     }
-    
+
+    // Build delivery string — include both if physical+email provided
+    const deliveryInfo = selectedShipping === 'digital'
+        ? emailAddress
+        : (emailAddress.includes('@') ? `${postalAddress} | email: ${emailAddress}` : postalAddress);
+
+    const totalPrice = cartGrandTotal();
+
     const payBtn = document.getElementById('pay-btn');
     payBtn.disabled = true;
-    
+
     showPaymentStatus('Preparing transaction...', 'pending');
-    
+
     try {
         if (!vendorPublicKey) {
             showPaymentStatus('Error: Vendor public key not configured', 'error');
@@ -648,7 +805,6 @@ async function processPayment() {
             return;
         }
 
-        // Get buyer's public key if not already fetched
         if (!buyerPublicKey) {
             showPaymentStatus('Getting buyer info...', 'pending');
             buyerPublicKey = await getMyPublicKey();
@@ -657,90 +813,139 @@ async function processPayment() {
                 payBtn.disabled = false;
                 return;
             }
-            console.log('Buyer public key:', buyerPublicKey.substring(0, 20) + '...');
         }
-        
-        let sendAmount;
-        let tokenName;
-        if (selectedPaymentMethod === 'USDT') {
-            sendAmount = totalPrice;
-            tokenName = 'USDT';
-        } else {
-            sendAmount = totalPrice / mxToUsdRate * 1.10;
-            tokenName = 'Minima';
-        }
-        
-        lastOrderReference = generateOrderReference(PRODUCT.name);
-        
+
+        const tokenName = selectedPaymentMethod === 'USDT' ? 'USDT' : 'Minima';
+        const sendAmount = selectedPaymentMethod === 'USDT'
+            ? totalPrice
+            : totalPrice / mxToUsdRate * (1 + SLIPPAGE_RATE / 100);
+
+        // One shared order reference for the whole cart
+        lastOrderReference = generateOrderReference('ORDER');
+
+        // ── Build cart summary for the combined ORDER payload ────────────────
+        const cartItems = cart.map(item => ({
+            product: item.productName,
+            size: item.sizeLabel,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice.toFixed(2),
+            lineTotal: item.lineTotal.toFixed(2)
+        }));
+
+        // Human-readable product summary for legacy inbox display
+        const productSummary = cart.map(item =>
+            item.quantity > 1 ? `${item.productName} x${item.quantity}` : item.productName
+        ).join(', ');
+
         const orderPayload = {
             type: 'ORDER',
-            randomid: generateRandomId(), // ChainMail pattern for deduplication
+            randomid: generateRandomId(),
             ref: lastOrderReference,
-            product: PRODUCT.name,
-            size: sizeLabel,
-            amount: totalPrice.toFixed(2),
+            product: productSummary,             // legacy single-product field
+            cartItems: cartItems,                // full cart array
+            itemCount: cart.reduce((s, i) => s + i.quantity, 0),
+            size: cart.length === 1 ? cart[0].sizeLabel : `${cart.length} items`,
+            amount: cartItemsSubtotal().toFixed(2),
             currency: tokenName,
             delivery: deliveryInfo,
             shipping: selectedShipping,
             timestamp: Date.now(),
             buyerPublicKey: buyerPublicKey
         };
-        
+
         showPaymentStatus('Encrypting order...', 'pending');
         console.log('Order payload:', JSON.stringify(orderPayload));
-        
+
         const encryptResult = await encryptMessage(vendorPublicKey, orderPayload);
-        
         if (!encryptResult || !encryptResult.encrypted) {
             throw new Error('Failed to encrypt order');
         }
-        
-        showPaymentStatus('Sending encrypted order...', 'pending');
-        
+
+        showPaymentStatus('Sending order...', 'pending');
+
         const state = {};
         state[99] = encryptResult.encrypted;
-        
-        // ChainMail pattern: Send to fixed MINIMERCH_ADDRESS
         const command = 'send address:' + MINIMERCH_ADDRESS + ' amount:0.0001 tokenid:' + TOKEN_IDS.MINIMA + ' state:' + JSON.stringify(state);
-        console.log('Sending order to MINIMERCH_ADDRESS');
-        
-        // Store order data in case this goes to pending
-        pendingOrderData = {
-            randomid: orderPayload.randomid,
-            ref: lastOrderReference,
-            product: PRODUCT.name,
-            size: sizeLabel,
-            amount: totalPrice.toFixed(2),
-            currency: tokenName,
-            delivery: deliveryInfo,
-            shipping: selectedShipping,
-            buyerPublicKey: buyerPublicKey,
-            sendAmount: sendAmount
-        };
-        
-        const orderResponse = await new Promise((resolve) => {
-            MDS.cmd(command, resolve);
-        });
-        
-        console.log('Order Response:', JSON.stringify(orderResponse));
-        
-        // Check if response is pending (node in read mode)
+
+        const orderResponse = await new Promise((resolve) => MDS.cmd(command, resolve));
+        console.log('Order response:', JSON.stringify(orderResponse));
+
         if (orderResponse && orderResponse.pending) {
             pendingOrderUid = orderResponse.pendinguid;
-            console.log('Order is PENDING - UID:', pendingOrderUid, '- waiting for user approval');
-            showPaymentStatus('Order pending approval - check Pending Actions to confirm', 'pending');
+            pendingOrderData = {
+                randomid: orderPayload.randomid,
+                ref: lastOrderReference,
+                product: productSummary,
+                size: orderPayload.size,
+                amount: orderPayload.amount,
+                currency: tokenName,
+                delivery: deliveryInfo,
+                shipping: selectedShipping,
+                buyerPublicKey: buyerPublicKey,
+                sendAmount: sendAmount
+            };
+            showPaymentStatus('Order pending approval — check Pending Actions to confirm', 'pending');
             payBtn.disabled = false;
             payBtn.querySelector('.btn-text').textContent = '⏳ Pending...';
-            return; // Exit - will continue when MDS_PENDING fires and we check status
+            return;
         }
-        
+
         if (!orderResponse || !orderResponse.status) {
             throw new Error(orderResponse?.error || 'Order TX failed');
         }
-        
-        // Order sent successfully - continue with payment
-        await completeOrderAndPayment(orderResponse, payBtn);
-        
+
+        // Save order locally (full cart stored in originalOrder field)
+        await addMessage({
+            id: Date.now().toString(),
+            randomid: orderPayload.randomid,
+            ref: lastOrderReference,
+            type: 'ORDER',
+            product: productSummary,
+            size: orderPayload.size,
+            amount: orderPayload.amount,
+            currency: tokenName,
+            delivery: deliveryInfo,
+            shipping: selectedShipping,
+            timestamp: Date.now(),
+            coinid: extractTxid(orderResponse) || '',
+            read: true,
+            direction: 'sent',
+            buyerPublicKey: buyerPublicKey,
+            originalOrder: JSON.stringify(cartItems)
+        });
+
+        // ── Send one payment for the combined total ──────────────────────────
+        showPaymentStatus('Sending payment...', 'pending');
+
+        pendingPaymentData = { ref: lastOrderReference };
+
+        const payCommand = selectedPaymentMethod === 'USDT'
+            ? `send address:${vendorAddress} amount:${sendAmount.toFixed(8)} tokenid:${TOKEN_IDS.USDT}`
+            : `send address:${vendorAddress} amount:${sendAmount.toFixed(8)} tokenid:${TOKEN_IDS.MINIMA}`;
+
+        console.log('Payment command:', payCommand);
+
+        MDS.cmd(payCommand, (payResponse) => {
+            console.log('Payment Response:', JSON.stringify(payResponse));
+
+            if (payResponse && payResponse.pending) {
+                pendingPaymentUid = payResponse.pendinguid;
+                showPaymentStatus('Payment pending approval — check Pending Actions', 'pending');
+                if (payBtn) { payBtn.disabled = false; payBtn.querySelector('.btn-text').textContent = '⏳ Payment Pending...'; }
+                return;
+            }
+
+            if (payResponse && payResponse.status) {
+                completePayment(payResponse, payBtn);
+                // Clear cart on successful payment
+                cart = [];
+                updateCartBadge();
+            } else {
+                showPaymentStatus((payResponse?.error || 'Payment may have failed') + ' (orders were sent)', 'error');
+                if (payBtn) { payBtn.disabled = false; payBtn.querySelector('.btn-text').textContent = '💸 Pay Now'; }
+            }
+        });
+
     } catch (error) {
         console.error('Payment error:', error);
         payBtn.disabled = false;
@@ -762,7 +967,7 @@ async function loadLastPrice() {
 
 // Complete order after it's confirmed (either immediately or after pending approval)
 async function completeOrderAndPayment(orderResponse, payBtn) {
-    const orderTxid = orderResponse?.response?.txnid || 'confirmed';
+    const orderTxid = extractTxid(orderResponse) || '';
     console.log('Order sent with txid:', orderTxid);
     
     if (!pendingOrderData) {
@@ -836,16 +1041,36 @@ async function completeOrderAndPayment(orderResponse, payBtn) {
     pendingOrderData = null;
 }
 
+// Stamp the real payment TXID onto the saved ORDER record.
+// Uses MDS.sql directly (non-blocking, no async/await, no currentMessages mutation).
+function stampPaymentTxid(ref, txid) {
+    if (!txid || !ref) return;
+    const safeRef  = ref.replace(/'/g, "''");
+    const safeTxid = txid.replace(/'/g, "''");
+    MDS.sql(`UPDATE messages SET coinid = '${safeTxid}' WHERE ref = '${safeRef}'`, (res) => {
+        if (res && res.status) {
+            // Silently update the in-memory record so detail view reflects it immediately
+            const msg = currentMessages.find(m => m.ref === ref && m.direction === 'sent');
+            if (msg) msg.coinid = txid;
+        } else {
+            console.warn('stampPaymentTxid failed:', res?.error);
+        }
+    });
+}
+
 // Complete payment after confirmation
 function completePayment(payResponse, payBtn) {
-    const txid = payResponse?.response?.txnid || 'confirmed';
+    const txid = extractTxid(payResponse) || extractTxid(payResponse?.result) || '';
     const ref = pendingPaymentData?.ref || lastOrderReference;
     
     if (payBtn) {
         payBtn.querySelector('.btn-text').textContent = '✓ Sent!';
         payBtn.classList.add('sent');
     }
-    showPaymentStatus('Transaction sent! TX: ' + txid.substring(0, 20) + '...', 'success');
+    showPaymentStatus('Transaction sent! ✓', 'success');
+
+    // Stamp real payment TXID onto the order record (non-blocking, safe)
+    stampPaymentTxid(ref, txid);
     
     setTimeout(() => {
         closeModal();
@@ -857,7 +1082,7 @@ function completePayment(payResponse, payBtn) {
 
 // Complete reply after confirmation (either immediately or after pending approval)
 async function completeReply(response, statusEl, sendBtn) {
-    const txid = response?.response?.txnid || 'confirmed';
+    const txid = extractTxid(response) || '';
     console.log('Reply confirmed with txid:', txid);
     
     if (!pendingReplyData) {
@@ -886,7 +1111,7 @@ async function completeReply(response, statusEl, sendBtn) {
     await addMessage(sentMessage);
     
     if (statusEl) {
-        statusEl.textContent = 'Reply sent! TX: ' + txid.substring(0, 20) + '...';
+        statusEl.textContent = 'Reply sent! ✓';
         statusEl.className = 'reply-status success';
     }
     if (sendBtn) {
@@ -979,129 +1204,188 @@ async function fetchMXPrice() {
 
 // ============ UI FUNCTIONS ============
 
-function initApp() {
-    document.getElementById('product-name').textContent = PRODUCT.name;
-    document.getElementById('product-description').textContent = PRODUCT.description;
-    document.getElementById('product-image').src = PRODUCT.image;
-    document.title = `miniShop - ${PRODUCT.name}`;
-    
-    const isUnitsMode = PRODUCT.mode === 'units';
-    
-    if (isUnitsMode) {
-        document.getElementById('size-selector').classList.add('hidden');
-        document.getElementById('quantity-selector').classList.remove('hidden');
-        document.getElementById('quantity-input').max = PRODUCT.maxUnits;
-        selectedQuantity = 1;
-        document.getElementById('quantity-input').value = 1;
-        document.getElementById('quantity-display').textContent = 1;
-    } else {
-        document.getElementById('size-selector').classList.remove('hidden');
-        document.getElementById('quantity-selector').classList.add('hidden');
-        updateSizeButtons();
+// Per-card state: selectedSize and selectedQuantity keyed by product index
+const cardState = {};
+
+function getCardState(idx) {
+    if (!cardState[idx]) {
+        cardState[idx] = { selectedSize: 'eighth', selectedQuantity: 1 };
     }
-    
-    updatePrices();
-    setupEventListeners();
+    return cardState[idx];
 }
 
-function updateSizeButtons() {
-    const buttons = document.querySelectorAll('.size-btn');
-    buttons.forEach(btn => {
+// ── initAllProducts: initialise every rendered card ──────────────────────────
+function initAllProducts() {
+    PRODUCTS.forEach((_, i) => initProduct(i));
+    // Wire up modal-level listeners once (not per card)
+    setupModalListeners();
+    updateAllPrices();
+}
+
+// ── initProduct: populate one card by index ──────────────────────────────────
+function initProduct(i) {
+    const p = PRODUCTS[i];
+    const el = id => document.getElementById(`${id}-${i}`);
+
+    const nameEl = el('product-name');
+    if (!nameEl) return; // card not in DOM (shouldn't happen)
+
+    nameEl.textContent = p.name;
+    el('product-description').textContent = p.description;
+    el('product-image').src = p.image;
+
+    const state = getCardState(i);
+    const isUnitsMode = p.mode === 'units';
+
+    if (isUnitsMode) {
+        el('size-selector').classList.add('hidden');
+        el('quantity-selector').classList.remove('hidden');
+        el('quantity-input').max = p.maxUnits;
+        el('quantity-input').value = state.selectedQuantity;
+        el('quantity-display').textContent = state.selectedQuantity;
+    } else {
+        el('size-selector').classList.remove('hidden');
+        el('quantity-selector').classList.add('hidden');
+        updateSizeButtonsForCard(i);
+    }
+
+    setupCardListeners(i);
+    updateCardPrice(i);
+}
+
+// ── updateSizeButtonsForCard ─────────────────────────────────────────────────
+function updateSizeButtonsForCard(i) {
+    const p = PRODUCTS[i];
+    const state = getCardState(i);
+    const card = document.querySelector(`.product-card[data-index="${i}"]`);
+    if (!card) return;
+    card.querySelectorAll('.size-btn').forEach(btn => {
         const sizeId = btn.dataset.size;
-        const size = PRODUCT.sizes.find(s => s.id === sizeId);
-        
-        btn.querySelector('.size-weight').textContent = `${size.weight}g`;
+        const size = p.sizes.find(s => s.id === sizeId);
+        if (!size) return;
+        btn.querySelector('.size-weight').textContent = p.mode === 'units' ? `${size.weight}` : `${size.weight}g`;
         btn.querySelector('.size-percent').textContent = `${size.percentage}%`;
-        
-        if (sizeId === selectedSize) {
-            btn.classList.add('active');
-        } else {
-            btn.classList.remove('active');
-        }
+        btn.classList.toggle('active', sizeId === state.selectedSize);
     });
 }
 
-function updatePrices() {
-    const isUnitsMode = PRODUCT.mode === 'units';
+// ── updateCardPrice: update the price display for one card ───────────────────
+function updateCardPrice(i) {
+    const p = PRODUCTS[i];
+    const state = getCardState(i);
+    const el = id => document.getElementById(`${id}-${i}`);
+
     let productPrice;
-    
-    if (isUnitsMode) {
-        productPrice = PRODUCT.pricePerUnit * selectedQuantity;
+    if (p.mode === 'units') {
+        productPrice = p.pricePerUnit * state.selectedQuantity;
     } else {
-        const size = PRODUCT.sizes.find(s => s.id === selectedSize);
-        productPrice = PRODUCT.pricePerGram * size.weight;
-    }
-    
-    const priceUsdEl = document.getElementById('price-usd-value');
-    if (priceUsdEl) {
-        priceUsdEl.textContent = `$${productPrice.toFixed(2)} USDT`;
+        const size = p.sizes.find(s => s.id === state.selectedSize);
+        productPrice = size ? p.pricePerGram * size.weight : 0;
     }
 
-    const buyBtnPriceEl = document.querySelector('.buy-button .btn-price');
-    if (buyBtnPriceEl) {
-        buyBtnPriceEl.textContent = `$${productPrice.toFixed(2)} USDT`;
-    }
-    
-    const minimaPriceEl = document.getElementById('price-minima');
-    if (mxToUsdRate > 0 && mxToUsdRate !== 1) {
-        const minimaAmount = productPrice / mxToUsdRate;
-        if (minimaPriceEl) {
-            minimaPriceEl.textContent = `${minimaAmount.toFixed(4)} Minima`;
-        }
-    } else {
-        if (minimaPriceEl) {
+    const priceUsdEl = el('price-usd-value');
+    if (priceUsdEl) priceUsdEl.textContent = `$${productPrice.toFixed(2)} USDT`;
+
+    const btnPriceEl = el('btn-price');
+    if (btnPriceEl) btnPriceEl.textContent = `$${productPrice.toFixed(2)} USDT`;
+
+    const minimaPriceEl = el('price-minima');
+    if (minimaPriceEl) {
+        if (mxToUsdRate > 0) {
+            minimaPriceEl.textContent = `${(productPrice / mxToUsdRate).toFixed(4)} Minima`;
+        } else {
             minimaPriceEl.textContent = 'Loading...';
         }
     }
-    
+}
+
+// ── updateAllPrices: refresh every visible card + checkout modal ─────────────
+function updatePrices() {
+    updateAllPrices();
+}
+
+function updateAllPrices() {
+    PRODUCTS.forEach((_, i) => updateCardPrice(i));
     const modal = document.getElementById('modal');
-    if (modal && !modal.classList.contains('hidden')) {
-        updatePayButton();
+    if (modal && !modal.classList.contains('hidden')) updatePayButton();
+}
+
+// ── setupCardListeners: wire up interactive elements on one card ─────────────
+function setupCardListeners(i) {
+    const p = PRODUCTS[i];
+    const state = getCardState(i);
+    const el = id => document.getElementById(`${id}-${i}`);
+    const card = document.querySelector(`.product-card[data-index="${i}"]`);
+    if (!card) return;
+
+    // Size buttons
+    card.querySelectorAll('.size-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            state.selectedSize = btn.dataset.size;
+            // Keep global selectedSize in sync for the active/focused product
+            selectedSize = state.selectedSize;
+            updateSizeButtonsForCard(i);
+            updateCardPrice(i);
+        });
+    });
+
+    // Quantity +/-
+    const qtyMinus = el('qty-minus');
+    const qtyPlus  = el('qty-plus');
+    const qtyInput = el('quantity-input');
+    const qtyDisplay = el('quantity-display');
+
+    if (qtyMinus) {
+        qtyMinus.addEventListener('click', () => {
+            const cur = parseInt(qtyInput.value) || 1;
+            if (cur > 1) {
+                state.selectedQuantity = cur - 1;
+                qtyInput.value = state.selectedQuantity;
+                qtyDisplay.textContent = state.selectedQuantity;
+                selectedQuantity = state.selectedQuantity;
+                updateCardPrice(i);
+            }
+        });
+    }
+    if (qtyPlus) {
+        qtyPlus.addEventListener('click', () => {
+            const cur = parseInt(qtyInput.value) || 1;
+            const max = parseInt(qtyInput.max) || p.maxUnits || 10;
+            if (cur < max) {
+                state.selectedQuantity = cur + 1;
+                qtyInput.value = state.selectedQuantity;
+                qtyDisplay.textContent = state.selectedQuantity;
+                selectedQuantity = state.selectedQuantity;
+                updateCardPrice(i);
+            }
+        });
+    }
+    if (qtyInput) {
+        qtyInput.addEventListener('input', (e) => {
+            let val = parseInt(e.target.value) || 1;
+            const max = parseInt(e.target.max) || p.maxUnits || 10;
+            if (val < 1) val = 1;
+            if (val > max) val = max;
+            state.selectedQuantity = val;
+            selectedQuantity = val;
+            qtyDisplay.textContent = val;
+            updateCardPrice(i);
+        });
+    }
+
+    // Add to Cart button
+    const buyBtn = el('buy-btn');
+    if (buyBtn) {
+        buyBtn.addEventListener('click', () => addToCartByIndex(i));
     }
 }
 
-function setupEventListeners() {
-    document.querySelectorAll('.size-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            selectedSize = btn.dataset.size;
-            updateSizeButtons();
-            updatePrices();
-        });
-    });
-    
-    document.getElementById('qty-minus').addEventListener('click', () => {
-        const input = document.getElementById('quantity-input');
-        const current = parseInt(input.value) || 1;
-        if (current > 1) {
-            selectedQuantity = current - 1;
-            input.value = selectedQuantity;
-            document.getElementById('quantity-display').textContent = selectedQuantity;
-            updatePrices();
-        }
-    });
-    
-    document.getElementById('qty-plus').addEventListener('click', () => {
-        const input = document.getElementById('quantity-input');
-        const current = parseInt(input.value) || 1;
-        const max = parseInt(input.max) || 10;
-        if (current < max) {
-            selectedQuantity = current + 1;
-            input.value = selectedQuantity;
-            document.getElementById('quantity-display').textContent = selectedQuantity;
-            updatePrices();
-        }
-    });
-    
-    document.getElementById('quantity-input').addEventListener('input', (e) => {
-        let val = parseInt(e.target.value) || 1;
-        const max = parseInt(e.target.max) || 10;
-        if (val < 1) val = 1;
-        if (val > max) val = max;
-        selectedQuantity = val;
-        document.getElementById('quantity-display').textContent = selectedQuantity;
-        updatePrices();
-    });
-    
+// ── setupModalListeners: one-time wiring for checkout + confirmation modals ──
+let _modalListenersReady = false;
+function setupModalListeners() {
+    if (_modalListenersReady) return;
+    _modalListenersReady = true;
+
     document.querySelectorAll('.shipping-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             selectedShipping = btn.dataset.shipping;
@@ -1109,13 +1393,11 @@ function setupEventListeners() {
             document.querySelectorAll('.shipping-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             updateAddressField();
-            updatePrices();
+            updateAllPrices();
             updateCheckoutSummary();
         });
     });
-    
-    document.getElementById('buy-btn').addEventListener('click', openCheckoutModal);
-    
+
     document.querySelectorAll('.payment-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             selectedPaymentMethod = btn.dataset.method;
@@ -1124,82 +1406,79 @@ function setupEventListeners() {
             updatePayButton();
         });
     });
-    
+
     document.querySelector('.modal-close').addEventListener('click', closeModal);
-    
     document.getElementById('postal-address').addEventListener('input', updatePayButton);
     document.getElementById('email-address').addEventListener('input', updatePayButton);
     document.getElementById('pay-btn').addEventListener('click', processPayment);
     document.getElementById('close-confirmation').addEventListener('click', closeConfirmationModal);
-    
     document.getElementById('modal').addEventListener('click', (e) => {
         if (e.target.id === 'modal') closeModal();
     });
 }
 
+// ── Legacy alias so existing code that calls initApp() still works ────────────
+function initApp() {
+    initAllProducts();
+}
+
 function openCheckoutModal() {
+    if (cart.length === 0) return;
+
     const modal = document.getElementById('modal');
-    const isUnitsMode = PRODUCT.mode === 'units';
-    let productPrice, sizeLabel;
-    
-    if (isUnitsMode) {
-        productPrice = PRODUCT.pricePerUnit * selectedQuantity;
-        sizeLabel = `${selectedQuantity} unit${selectedQuantity > 1 ? 's' : ''}`;
-    } else {
-        const size = PRODUCT.sizes.find(s => s.id === selectedSize);
-        productPrice = PRODUCT.pricePerGram * size.weight;
-        sizeLabel = `${size.name} (${size.weight}g)`;
+    const itemsSubtotal = cartItemsSubtotal();
+    const fee = cartShippingFee();
+    const totalPrice = itemsSubtotal + fee;
+    const minimaTotal = totalPrice / mxToUsdRate * (1 + SLIPPAGE_RATE / 100);
+
+    // Render per-item lines in checkout summary
+    const linesEl = document.getElementById('checkout-cart-lines');
+    if (linesEl) {
+        linesEl.innerHTML = cart.map(item => `
+            <div class="summary-item checkout-line">
+                <span>${item.productName} &mdash; ${item.sizeLabel}${item.quantity > 1 && item.mode !== 'units' ? ' &times;' + item.quantity : ''}</span>
+                <span>$${item.lineTotal.toFixed(2)}</span>
+            </div>
+        `).join('');
     }
-    
-    const totalPrice = productPrice + shippingFee;
-    const minimaTotal = totalPrice / mxToUsdRate * 1.10;
-    
-    document.getElementById('modal-product').textContent = PRODUCT.name;
-    document.getElementById('summary-size').textContent = sizeLabel;
-    document.getElementById('summary-product').textContent = `$${productPrice.toFixed(2)} USDT`;
-    document.getElementById('summary-shipping').textContent = `$${shippingFee.toFixed(2)} USDT`;
-    document.getElementById('summary-subtotal').textContent = `${totalPrice.toFixed(2)} USDT`;
+
+    const itemCount = cart.reduce((s, i) => s + i.quantity, 0);
+    document.getElementById('modal-product').textContent = `${itemCount} item${itemCount > 1 ? 's' : ''}`;
+    document.getElementById('summary-product').textContent = `$${itemsSubtotal.toFixed(2)} USDT`;
+    document.getElementById('summary-shipping').textContent = fee === 0 ? 'Free' : `$${fee.toFixed(2)} USDT`;
     document.getElementById('summary-usd').textContent = `$${totalPrice.toFixed(2)} USDT`;
-    
-    if (mxToUsdRate > 0 && mxToUsdRate !== 1) {
-        document.getElementById('summary-minima').innerHTML = `${minimaTotal.toFixed(4)} Minima<br><span class="slippage-note">(+10% slippage)</span>`;
+
+    if (mxToUsdRate > 0) {
+        document.getElementById('summary-minima').innerHTML = `${minimaTotal.toFixed(4)} Minima<br><span class="slippage-note">(+${SLIPPAGE_RATE}% slippage)</span>`;
         document.getElementById('pay-amount').textContent = `${totalPrice.toFixed(2)} USD = ${minimaTotal.toFixed(4)} Minima`;
     } else {
         document.getElementById('summary-minima').textContent = 'Loading...';
         document.getElementById('pay-amount').textContent = '--';
     }
-    
+
     document.getElementById('postal-address').value = '';
     document.getElementById('email-address').value = '';
     updateAddressField();
     updatePayButton();
-    
+
     modal.classList.remove('hidden');
 }
 
 function updateCheckoutSummary() {
     const modal = document.getElementById('modal');
     if (modal.classList.contains('hidden')) return;
-    
-    const isUnitsMode = PRODUCT.mode === 'units';
-    let productPrice;
-    
-    if (isUnitsMode) {
-        productPrice = PRODUCT.pricePerUnit * selectedQuantity;
-    } else {
-        const size = PRODUCT.sizes.find(s => s.id === selectedSize);
-        productPrice = PRODUCT.pricePerGram * size.weight;
-    }
-    
-    const totalPrice = productPrice + shippingFee;
-    const minimaTotal = totalPrice / mxToUsdRate * 1.10;
-    
-    document.getElementById('summary-shipping').textContent = `$${shippingFee.toFixed(2)} USDT`;
-    document.getElementById('summary-subtotal').textContent = `${totalPrice.toFixed(2)} USDT`;
+
+    const itemsSubtotal = cartItemsSubtotal();
+    const fee = cartShippingFee();
+    const totalPrice = itemsSubtotal + fee;
+    const minimaTotal = totalPrice / mxToUsdRate * (1 + SLIPPAGE_RATE / 100);
+
+    document.getElementById('summary-product').textContent = `$${itemsSubtotal.toFixed(2)} USDT`;
+    document.getElementById('summary-shipping').textContent = fee === 0 ? 'Free' : `$${fee.toFixed(2)} USDT`;
     document.getElementById('summary-usd').textContent = `$${totalPrice.toFixed(2)} USDT`;
-    
-    if (mxToUsdRate > 0 && mxToUsdRate !== 1) {
-        document.getElementById('summary-minima').innerHTML = `${minimaTotal.toFixed(4)} Minima<br><span class="slippage-note">(+10% slippage)</span>`;
+
+    if (mxToUsdRate > 0) {
+        document.getElementById('summary-minima').innerHTML = `${minimaTotal.toFixed(4)} Minima<br><span class="slippage-note">(+${SLIPPAGE_RATE}% slippage)</span>`;
         document.getElementById('pay-amount').textContent = `${totalPrice.toFixed(2)} USD = ${minimaTotal.toFixed(4)} Minima`;
     }
 }
@@ -1210,21 +1489,17 @@ function closeModal() {
 }
 
 function updateAddressField() {
-    const postalAddress = document.getElementById('postal-address');
-    const emailAddress = document.getElementById('email-address');
-    const addressHeading = document.getElementById('address-heading');
-    const addressNote = document.getElementById('address-note');
-    
+    const postalSection = document.getElementById('postal-address-section');
+    const emailSection = document.getElementById('email-address-section');
+
     if (selectedShipping === 'digital') {
-        postalAddress.classList.add('hidden');
-        emailAddress.classList.remove('hidden');
-        addressHeading.textContent = '📧 Email Address';
-        addressNote.textContent = 'Your download link will be sent to this email';
+        // Digital only — hide postal, show email
+        if (postalSection) postalSection.classList.add('hidden');
+        if (emailSection) emailSection.classList.remove('hidden');
     } else {
-        postalAddress.classList.remove('hidden');
-        emailAddress.classList.add('hidden');
-        addressHeading.textContent = '📍 Postal Address';
-        addressNote.textContent = 'This will be recorded with your payment transaction';
+        // Physical (uk/intl) — show both so mixed carts work
+        if (postalSection) postalSection.classList.remove('hidden');
+        if (emailSection) emailSection.classList.remove('hidden');
     }
 }
 
@@ -1233,34 +1508,25 @@ function updatePayButton() {
     const emailAddress = document.getElementById('email-address').value.trim();
     const payBtn = document.getElementById('pay-btn');
     const payAmount = document.getElementById('pay-amount');
-    
-    const isUnitsMode = PRODUCT.mode === 'units';
-    let productPrice;
-    
-    if (isUnitsMode) {
-        productPrice = PRODUCT.pricePerUnit * selectedQuantity;
-    } else {
-        const size = PRODUCT.sizes.find(s => s.id === selectedSize);
-        productPrice = PRODUCT.pricePerGram * size.weight;
-    }
-    
-    const totalPrice = productPrice + shippingFee;
-    
+
+    const totalPrice = cartGrandTotal();
+
     let isAddressValid;
     if (selectedShipping === 'digital') {
         isAddressValid = emailAddress.includes('@') && emailAddress.length > 0;
     } else {
+        // Physical: postal required; email optional (nice-to-have for mixed carts)
         isAddressValid = postalAddress.length >= 10;
     }
-    
+
     if (mxToUsdRate > 0) {
         if (selectedPaymentMethod === 'USDT') {
             payAmount.textContent = `${totalPrice.toFixed(2)} USD = ${totalPrice.toFixed(2)} USDT`;
         } else {
-            const minimaAmount = totalPrice / mxToUsdRate * 1.10;
+            const minimaAmount = totalPrice / mxToUsdRate * (1 + SLIPPAGE_RATE / 100);
             payAmount.textContent = `${totalPrice.toFixed(2)} USD = ${minimaAmount.toFixed(4)} Minima`;
         }
-        payBtn.disabled = !isAddressValid;
+        payBtn.disabled = !isAddressValid || cart.length === 0;
     } else {
         payAmount.textContent = '--';
         payBtn.disabled = true;
@@ -1279,9 +1545,53 @@ function hidePaymentStatus() {
     statusEl.classList.add('hidden');
 }
 
+// ── Copy-to-clipboard helper ─────────────────────────────────────────────────
+const COPY_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const CHECK_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+function truncateTxid(id) {
+    // No truncation — return full value; CSS word-break handles wrapping
+    return id;
+}
+
+function wireCopyBtn(btnId, text) {
+    const btn = document.getElementById(btnId);
+    if (!btn || !text || text === 'Pending...' || text === '-') return;
+    btn.innerHTML = COPY_ICON;
+    btn.style.display = 'inline-flex';
+    btn.onclick = () => {
+        const doFlash = () => {
+            btn.innerHTML = CHECK_ICON;
+            btn.classList.add('copied');
+            setTimeout(() => {
+                btn.innerHTML = COPY_ICON;
+                btn.classList.remove('copied');
+            }, 2000);
+        };
+        navigator.clipboard.writeText(text).then(doFlash).catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            doFlash();
+        });
+    };
+}
+
 function showConfirmation(txid, orderRef) {
-    document.getElementById('tx-id').textContent = txid || 'Pending...';
-    document.getElementById('order-ref').textContent = orderRef || lastOrderReference || 'N/A';
+    const fullTxid = txid || 'Pending...';
+    const fullRef  = orderRef || lastOrderReference || 'N/A';
+
+    document.getElementById('tx-id').textContent    = fullTxid;
+    document.getElementById('order-ref').textContent = fullRef;
+
+    // Wire copy buttons
+    wireCopyBtn('copy-txid-btn',    fullTxid);
+    wireCopyBtn('copy-orderref-btn', fullRef);
+
     document.getElementById('confirmation-modal').classList.remove('hidden');
 }
 
@@ -1327,77 +1637,62 @@ function validateVendorAddress() {
 let currentView = 'shop';
 let selectedMessage = null;
 
-function renderShop() {
-    const mainContent = document.querySelector('.main-content');
-    mainContent.innerHTML = `
-        <div class="product-card">
+function renderCardHTML(i) {
+    return `
+        <div class="product-card" data-index="${i}">
             <div class="product-image-container">
-                <img id="product-image" src="item.jpg" alt="Product" class="product-image">
+                <img id="product-image-${i}" src="item.jpg" alt="Product" class="product-image">
             </div>
-            
+
             <div class="product-info">
-                <h2 id="product-name" class="product-name">Loading...</h2>
-                <p id="product-description" class="product-description">Loading product details...</p>
-                
+                <h2 id="product-name-${i}" class="product-name">Loading...</h2>
+                <p id="product-description-${i}" class="product-description">Loading...</p>
+
                 <div class="price-display">
                     <div class="price-usd">
                         <span class="price-label">Price (MXUSDT)</span>
-                        <span id="price-usd-value" class="price-value">$0.00</span>
+                        <span id="price-usd-value-${i}" class="price-value">$0.00</span>
                     </div>
                     <div class="price-crypto">
                         <span class="price-label">in Minima</span>
-                        <span id="price-minima" class="price-value crypto">-- Minima</span>
+                        <span id="price-minima-${i}" class="price-value crypto">-- Minima</span>
                     </div>
                 </div>
             </div>
 
-            <div class="size-selector" id="size-selector">
-                <h3 id="selector-title">Choose Your Size</h3>
+            <div class="size-selector" id="size-selector-${i}">
+                <h3>Choose Your Size</h3>
                 <div class="size-options">
-                    <button class="size-btn" data-size="full">
-                        <span class="size-name">Full</span>
-                        <span class="size-weight">28g</span>
-                        <span class="size-percent">100%</span>
-                    </button>
-                    <button class="size-btn" data-size="half">
-                        <span class="size-name">Half</span>
-                        <span class="size-weight">14g</span>
-                        <span class="size-percent">50%</span>
-                    </button>
-                    <button class="size-btn" data-size="quarter">
-                        <span class="size-name">Quarter</span>
-                        <span class="size-weight">7g</span>
-                        <span class="size-percent">25%</span>
-                    </button>
-                    <button class="size-btn active" data-size="eighth">
-                        <span class="size-name">Eighth</span>
-                        <span class="size-weight">3.5g</span>
-                        <span class="size-percent">12.5%</span>
-                    </button>
+                    <button class="size-btn" data-size="full"><span class="size-name">Full</span><span class="size-weight">28g</span><span class="size-percent">100%</span></button>
+                    <button class="size-btn" data-size="half"><span class="size-name">Half</span><span class="size-weight">14g</span><span class="size-percent">50%</span></button>
+                    <button class="size-btn" data-size="quarter"><span class="size-name">Quarter</span><span class="size-weight">7g</span><span class="size-percent">25%</span></button>
+                    <button class="size-btn active" data-size="eighth"><span class="size-name">Eighth</span><span class="size-weight">3.5g</span><span class="size-percent">12.5%</span></button>
                 </div>
             </div>
 
-            <div class="quantity-selector hidden" id="quantity-selector">
+            <div class="quantity-selector hidden" id="quantity-selector-${i}">
                 <h3>Choose Quantity</h3>
                 <div class="quantity-input">
-                    <button class="qty-btn qty-minus" id="qty-minus">−</button>
-                    <input type="number" id="quantity-input" value="1" min="1" max="10">
-                    <button class="qty-btn qty-plus" id="qty-plus">+</button>
+                    <button class="qty-btn qty-minus" id="qty-minus-${i}">−</button>
+                    <input type="number" id="quantity-input-${i}" value="1" min="1" max="10">
+                    <button class="qty-btn qty-plus" id="qty-plus-${i}">+</button>
                 </div>
-                <p class="quantity-label"><span id="quantity-display">1</span> unit(s)</p>
+                <p class="quantity-label"><span id="quantity-display-${i}">1</span> unit(s)</p>
             </div>
 
-            <button id="buy-btn" class="buy-button">
-                <span class="btn-text">🛒 Buy Now</span>
-                <span class="btn-price">$0.00</span>
+            <button id="buy-btn-${i}" class="buy-button">
+                <span class="btn-text">+ Add to Cart</span>
+                <span id="btn-price-${i}" class="btn-price">$0.00</span>
             </button>
-
-            <div id="loading-indicator" class="loading hidden">
-                <div class="spinner"></div>
-                <span>Loading price...</span>
-            </div>
         </div>
     `;
+}
+
+function renderShop() {
+    const mainContent = document.querySelector('.main-content');
+    mainContent.innerHTML = `<div class="product-grid">${PRODUCTS.map((_, i) => renderCardHTML(i)).join('')}</div>`;
+    // Reset modal listeners flag so they get rebound after DOM replacement
+    _modalListenersReady = false;
 }
 
 function formatTime(timestamp) {
@@ -1559,7 +1854,7 @@ function renderMessageDetail(msg) {
                 <h3>📤 Sent Reply</h3>
                 <span class="message-direction">📤 Sent</span>
             </div>
-            
+
             <div class="message-info">
                 <div class="info-row">
                     <span class="info-label">Order Ref:</span>
@@ -1576,14 +1871,23 @@ function renderMessageDetail(msg) {
                     <span class="info-value">${new Date(msg.timestamp).toLocaleString()}</span>
                 </div>
             </div>
-            
+
             <div class="reply-content">
                 <h4>Your Message:</h4>
                 <p class="reply-message">${msg.message}</p>
             </div>
+
+            ${msg.coinid ? `
+            <div class="message-tx">
+                <span class="tx-label">TX ID:</span>
+                <div class="tx-copy-row">
+                    <span class="tx-id" id="detail-txid">${msg.coinid}</span>
+                    <button class="copy-btn" id="detail-copy-txid-btn" title="Copy transaction ID"></button>
+                </div>
+            </div>` : ''}
         `;
     }
-    
+
     // Sent ORDER
     if (!isReceived) {
         return `
@@ -1592,7 +1896,7 @@ function renderMessageDetail(msg) {
                 <h3>📤 ${msg.subject || msg.product || 'Order: ' + msg.ref}</h3>
                 <span class="message-direction">📤 Sent</span>
             </div>
-            
+
             <div class="message-info">
                 <div class="info-row">
                     <span class="info-label">Order Ref:</span>
@@ -1623,9 +1927,17 @@ function renderMessageDetail(msg) {
                     <span class="info-value">${msg.delivery || 'N/A'}</span>
                 </div>
             </div>
+
+            <div class="message-tx">
+                <span class="tx-label">Payment TX ID:</span>
+                <div class="tx-copy-row">
+                    <span class="tx-id" id="detail-txid">${msg.coinid || 'Awaiting payment confirmation…'}</span>
+                    ${msg.coinid ? `<button class="copy-btn" id="detail-copy-txid-btn" title="Copy transaction ID"></button>` : ''}
+                </div>
+            </div>
         `;
     }
-    
+
     // Default: received message (should not reach here normally)
     return `
         <button class="back-btn" id="back-to-list">← Back</button>
@@ -1689,6 +2001,12 @@ function setupDetailEventListeners() {
             renderInbox(); // Re-render to update counts
         });
     }
+
+    // Wire TXID copy button if present in the detail view
+    const txidEl = document.getElementById('detail-txid');
+    if (txidEl) {
+        wireCopyBtn('detail-copy-txid-btn', txidEl.textContent);
+    }
     
     // Mark as Read button
     const markReadBtn = document.getElementById('mark-read-btn');
@@ -1744,14 +2062,15 @@ function setupDetailEventListeners() {
 
 function switchView(view) {
     currentView = view;
-    
+
     document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.view === view);
     });
-    
+
     if (view === 'shop') {
         renderShop();
-        initApp();
+        initAllProducts();
+        initCarousel();
     } else {
         renderInbox();
     }
@@ -1765,24 +2084,119 @@ function setupNavigation() {
             <h1>miniMerch</h1>
         </div>
         <nav class="nav-tabs">
-            <button class="nav-btn active" data-view="shop">🛍️ Shop</button>
-            <button class="nav-btn" data-view="inbox" id="nav-inbox">📬 Mailbox</button>
+            <button class="nav-btn active" data-view="shop">Shop</button>
+            <button class="nav-btn" data-view="inbox" id="nav-inbox">Mailbox</button>
         </nav>
-        <div class="header-decoration">
-            <svg class="peace-sign" viewBox="0 0 100 100" width="40" height="40">
-                <circle cx="50" cy="50" r="45" fill="none" stroke="#FFD700" stroke-width="4"/>
-                <line x1="50" y1="5" x2="50" y2="50" stroke="#FFD700" stroke-width="4"/>
-                <line x1="50" y1="50" x2="85" y2="75" stroke="#FFD700" stroke-width="4"/>
-                <line x1="50" y1="50" x2="15" y2="75" stroke="#FFD700" stroke-width="4"/>
-                <circle cx="50" cy="50" r="20" fill="#FFD700"/>
-                <circle cx="50" cy="50" r="12" fill="#2D5016"/>
-            </svg>
-        </div>
+        <button class="cart-btn" id="cart-btn" aria-label="Open cart">
+            🛒
+            <span class="cart-badge hidden" id="cart-badge">0</span>
+        </button>
     `;
-    
+
     document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.addEventListener('click', () => switchView(btn.dataset.view));
     });
+
+    document.getElementById('cart-btn').addEventListener('click', openCartModal);
+}
+
+// ============ CAROUSEL / RESPONSIVE GRID ============
+
+let currentProductIndex = 0;
+let _carouselMode = false;        // true = narrow (1 card visible), false = grid
+let _carouselListenersAdded = false;
+
+// matchMedia query — carousel mode below this width
+const CAROUSEL_MQ = window.matchMedia('(max-width: 599px)');
+
+function isCarouselMode() {
+    return CAROUSEL_MQ.matches;
+}
+
+function applyLayoutMode() {
+    _carouselMode = isCarouselMode();
+    const total = PRODUCTS.length;
+    const prevBtn = document.getElementById('carousel-prev');
+    const nextBtn = document.getElementById('carousel-next');
+    const dotsEl  = document.getElementById('carousel-dots');
+
+    if (!_carouselMode || total <= 1) {
+        // Grid mode — show all cards, hide carousel chrome
+        document.querySelectorAll('.product-card').forEach(c => c.classList.remove('carousel-hidden'));
+        if (prevBtn) prevBtn.style.display = 'none';
+        if (nextBtn) nextBtn.style.display = 'none';
+        if (dotsEl)  dotsEl.style.display  = 'none';
+    } else {
+        // Carousel mode — show only active card
+        document.querySelectorAll('.product-card').forEach((c, i) => {
+            c.classList.toggle('carousel-hidden', i !== currentProductIndex);
+        });
+        if (prevBtn) prevBtn.style.display = '';
+        if (nextBtn) nextBtn.style.display = '';
+        if (dotsEl)  dotsEl.style.display  = '';
+        renderCarouselDots();
+    }
+}
+
+function initCarousel() {
+    const total = PRODUCTS.length;
+
+    // Wire arrows and touch once only
+    if (!_carouselListenersAdded && total > 1) {
+        _carouselListenersAdded = true;
+
+        const prevBtn = document.getElementById('carousel-prev');
+        const nextBtn = document.getElementById('carousel-next');
+        if (prevBtn) prevBtn.addEventListener('click', () => navigateProduct(-1));
+        if (nextBtn) nextBtn.addEventListener('click', () => navigateProduct(1));
+
+        // Touch swipe on the track
+        let touchStartX = 0;
+        const track = document.querySelector('.carousel-track');
+        if (track) {
+            track.addEventListener('touchstart', e => { touchStartX = e.changedTouches[0].clientX; }, { passive: true });
+            track.addEventListener('touchend', e => {
+                const dx = e.changedTouches[0].clientX - touchStartX;
+                if (Math.abs(dx) > 40) navigateProduct(dx < 0 ? 1 : -1);
+            }, { passive: true });
+        }
+
+        // Respond to viewport resize
+        CAROUSEL_MQ.addEventListener('change', applyLayoutMode);
+    }
+
+    applyLayoutMode();
+}
+
+function renderCarouselDots() {
+    const dotsEl = document.getElementById('carousel-dots');
+    if (!dotsEl) return;
+    dotsEl.innerHTML = PRODUCTS.map((_, i) =>
+        `<button class="carousel-dot${i === currentProductIndex ? ' active' : ''}" data-index="${i}" aria-label="Product ${i + 1}"></button>`
+    ).join('');
+    dotsEl.querySelectorAll('.carousel-dot').forEach(dot => {
+        dot.addEventListener('click', () => {
+            const target = parseInt(dot.dataset.index);
+            navigateProduct(target - currentProductIndex);
+        });
+    });
+}
+
+function navigateProduct(direction) {
+    const total = PRODUCTS.length;
+    currentProductIndex = (currentProductIndex + direction + total) % total;
+    // Keep global PRODUCT alias in sync
+    // eslint-disable-next-line no-global-assign
+    PRODUCT = PRODUCTS[currentProductIndex];
+
+    if (_carouselMode) {
+        // Carousel mode: just toggle visibility — no DOM re-render needed
+        document.querySelectorAll('.product-card').forEach((c, i) => {
+            c.classList.toggle('carousel-hidden', i !== currentProductIndex);
+        });
+        renderCarouselDots();
+    }
+    // Grid mode: all cards already visible — nothing to do
 }
 
 // ============ MDS INITIALIZATION ============
@@ -1809,7 +2223,8 @@ MDS.init(async (msg) => {
         
         setupNavigation();
         renderShop();
-        initApp();
+        initAllProducts();
+        initCarousel();
         
         // Scan for replies
         setTimeout(() => scanForReplies(), 3000);

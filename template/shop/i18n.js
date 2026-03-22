@@ -1,316 +1,418 @@
 /**
- * Internationalization module for miniMerch
- * Supports English, Spanish, French
- * @module i18n
+ * @file Internationalization (i18n) module for miniMerch
+ * @version 1.0.0
  */
 
-/** Current locale */
-let currentLocale = 'en';
+// @ts-check
 
-/** Available locales */
-const SUPPORTED_LOCALES = ['en', 'es', 'fr'];
+/**
+ * @typedef {Object} TranslationStrings
+ * @property {Object} en - English translations
+ * @property {Object} es - Spanish translations
+ * @property {Object} fr - French translations
+ */
 
-/** Translation dictionary */
-const translations = {
-    en: {
-        // Product
-        'product.selectSize': 'Select Size',
-        'product.sizeGuide': 'Size Guide',
-        'product.addToCart': 'Add to Cart',
-        'product.outOfStock': 'Out of Stock',
-        'product.inStock': 'In Stock',
+/**
+ * @typedef {Object} I18nConfig
+ * @property {string} currentLocale - Currently selected locale
+ * @property {Object} translations - Translation dictionary
+ */
 
-        // Cart
-        'cart.title': 'Shopping Cart',
-        'cart.empty': 'Your cart is empty',
-        'cart.subtotal': 'Subtotal',
-        'cart.shipping': 'Shipping',
-        'cart.total': 'Total',
-        'cart.checkout': 'Checkout',
-        'cart.continueShopping': 'Continue Shopping',
-        'cart.remove': 'Remove',
-        'cart.quantity': 'Quantity',
+/** @type {I18nConfig} */
+const i18nConfig = {
+    currentLocale: 'en',
+    translations: {
+        en: {
+            // Navigation
+            shop: 'Shop',
+            mailbox: 'Mailbox',
+            cart: 'Cart',
+            inbox: 'Inbox',
+            sent: 'Sent',
+            all: 'All',
 
-        // Shipping
-        'shipping.uk': 'UK Delivery (£5)',
-        'shipping.eu': 'EU Delivery (£8)',
-        'shipping.world': 'Worldwide Delivery (£12)',
+            // Products
+            chooseYourSize: 'Choose Your Size',
+            chooseQuantity: 'Choose Quantity',
+            addToCart: 'Add to Cart',
+            priceInMXUSDT: 'Price (MXUSDT)',
+            inMinima: 'in Minima',
 
-        // Checkout
-        'checkout.title': 'Checkout',
-        'checkout.email': 'Email Address',
-        'checkout.deliveryAddress': 'Delivery Address',
-        'checkout.paymentMethod': 'Payment Method',
-        'checkout.payWithMinima': 'Pay with Minima',
-        'checkout.processing': 'Processing...',
-        'checkout.success': 'Order Placed!',
-        'checkout.error': 'Payment Failed',
+            // Checkout
+            checkout: 'Checkout',
+            payWith: 'Pay With',
+            shipping: 'Shipping',
+            payNow: 'Pay Now',
+            orderConfirmed: 'Order Confirmed',
+            thanksForOrder: 'Thanks for your order',
+            orderReference: 'Order Reference',
+            transactionId: 'Transaction ID',
+            keepForRecords: 'Keep this for your records',
+            quoteForSupport: 'Quote this reference for support',
+            postalAddress: 'Postal Address',
+            emailAddress: 'Email Address',
+            deliveryNote: 'Your postal address has been recorded.',
 
-        // Price
-        'price.minimaAmount': 'Minima Amount',
-        'price.usdAmount': 'USD Amount',
-        'price.calculating': 'Calculating...',
+            // Shipping options
+            ukDomestic: 'UK Domestic',
+            international: 'International',
+            electronicDelivery: 'Electronic Delivery',
+            free: 'Free',
 
-        // Status
-        'status.pending': 'Pending',
-        'status.paid': 'Paid',
-        'status.confirmed': 'Confirmed',
-        'status.shipped': 'Shipped',
-        'status.delivered': 'Delivered',
+            // Payment methods
+            usdt: 'USDT',
+            minima: 'Minima',
 
-        // General
-        'general.loading': 'Loading...',
-        'general.error': 'Error',
-        'general.retry': 'Retry',
-        'general.close': 'Close',
-        'general.confirm': 'Confirm',
-        'general.cancel': 'Cancel'
-    },
+            // Order status
+            pending: 'Pending',
+            paid: 'Paid',
+            confirmed: 'Confirmed',
+            shipped: 'Shipped',
+            delivered: 'Delivered',
 
-    es: {
-        // Product
-        'product.selectSize': 'Seleccionar Talla',
-        'product.sizeGuide': 'Guía de Tallas',
-        'product.addToCart': 'Añadir al Carrito',
-        'product.outOfStock': 'Agotado',
-        'product.inStock': 'En Stock',
+            // Actions
+            markAsRead: 'Mark as Read',
+            replyToBuyer: 'Reply to Buyer',
+            replyToVendor: 'Reply to Vendor',
+            sendReply: 'Send Reply',
+            back: 'Back',
+            close: 'Close',
+            clearCart: 'Clear Cart',
 
-        // Cart
-        'cart.title': 'Carrito de Compras',
-        'cart.empty': 'Tu carrito está vacío',
-        'cart.subtotal': 'Subtotal',
-        'cart.shipping': 'Envío',
-        'cart.total': 'Total',
-        'cart.checkout': 'Pagar',
-        'cart.continueShopping': 'Seguir Comprando',
-        'cart.remove': 'Eliminar',
-        'cart.quantity': 'Cantidad',
+            // Messages
+            noOrders: 'No orders yet',
+            noSentMessages: 'No sent replies',
+            checkForOrders: 'Check for Orders',
+            emptyCart: 'Your cart is empty',
+            itemAdded: 'Added',
 
-        // Shipping
-        'shipping.uk': 'Entrega UK (£5)',
-        'shipping.eu': 'Entrega EU (£8)',
-        'shipping.world': 'Entrega Mundial (£12)',
+            // Errors
+            enterPostalAddress: 'Please enter a complete postal address',
+            enterEmail: 'Please enter a valid email address',
+            encryptionFailed: 'Failed to encrypt order',
+            paymentFailed: 'Payment failed',
 
-        // Checkout
-        'checkout.title': 'Pago',
-        'checkout.email': 'Correo Electrónico',
-        'checkout.deliveryAddress': 'Dirección de Entrega',
-        'checkout.paymentMethod': 'Método de Pago',
-        'checkout.payWithMinima': 'Pagar con Minima',
-        'checkout.processing': 'Procesando...',
-        'checkout.success': '¡Pedido Realizado!',
-        'checkout.error': 'Pago Fallido',
+            // Footer
+            poweredBy: 'Powered by',
+            bridgeUsdt: 'Bridge USDT to Minima',
+        },
+        es: {
+            // Navigation
+            shop: 'Tienda',
+            mailbox: 'Buzón',
+            cart: 'Carrito',
+            inbox: 'Entrada',
+            sent: 'Enviado',
+            all: 'Todos',
 
-        // Price
-        'price.minimaAmount': 'Cantidad en Minima',
-        'price.usdAmount': 'Cantidad en USD',
-        'price.calculating': 'Calculando...',
+            // Products
+            chooseYourSize: 'Elige tu Tamaño',
+            chooseQuantity: 'Elige Cantidad',
+            addToCart: 'Añadir al Carrito',
+            priceInMXUSDT: 'Precio (MXUSDT)',
+            inMinima: 'en Minima',
 
-        // Status
-        'status.pending': 'Pendiente',
-        'status.paid': 'Pagado',
-        'status.confirmed': 'Confirmado',
-        'status.shipped': 'Enviado',
-        'status.delivered': 'Entregado',
+            // Checkout
+            checkout: 'Pagar',
+            payWith: 'Pagar con',
+            shipping: 'Envío',
+            payNow: 'Pagar Ahora',
+            orderConfirmed: 'Pedido Confirmado',
+            thanksForOrder: '¡Gracias por tu pedido!',
+            orderReference: 'Referencia del Pedido',
+            transactionId: 'ID de Transacción',
+            keepForRecords: 'Guarda esto para tus registros',
+            quoteForSupport: 'Cita esta referencia para soporte',
+            postalAddress: 'Dirección Postal',
+            emailAddress: 'Correo Electrónico',
+            deliveryNote: 'Tu dirección postal ha sido registrada.',
 
-        // General
-        'general.loading': 'Cargando...',
-        'general.error': 'Error',
-        'general.retry': 'Reintentar',
-        'general.close': 'Cerrar',
-        'general.confirm': 'Confirmar',
-        'general.cancel': 'Cancelar'
-    },
+            // Shipping options
+            ukDomestic: 'Reino Unido Nacional',
+            international: 'Internacional',
+            electronicDelivery: 'Entrega Electrónica',
+            free: 'Gratis',
 
-    fr: {
-        // Product
-        'product.selectSize': 'Sélectionner la Taille',
-        'product.sizeGuide': 'Guide des Tailles',
-        'product.addToCart': 'Ajouter au Panier',
-        'product.outOfStock': 'Rupture de Stock',
-        'product.inStock': 'En Stock',
+            // Payment methods
+            usdt: 'USDT',
+            minima: 'Minima',
 
-        // Cart
-        'cart.title': 'Panier',
-        'cart.empty': 'Votre panier est vide',
-        'cart.subtotal': 'Sous-total',
-        'cart.shipping': 'Livraison',
-        'cart.total': 'Total',
-        'cart.checkout': 'Commander',
-        'cart.continueShopping': 'Continuer les Achats',
-        'cart.remove': 'Supprimer',
-        'cart.quantity': 'Quantité',
+            // Order status
+            pending: 'Pendiente',
+            paid: 'Pagado',
+            confirmed: 'Confirmado',
+            shipped: 'Enviado',
+            delivered: 'Entregado',
 
-        // Shipping
-        'shipping.uk': 'Livraison UK (£5)',
-        'shipping.eu': 'Livraison EU (£8)',
-        'shipping.world': 'Livraison Mondiale (£12)',
+            // Actions
+            markAsRead: 'Marcar como Leído',
+            replyToBuyer: 'Responder al Comprador',
+            replyToVendor: 'Responder al Vendedor',
+            sendReply: 'Enviar Respuesta',
+            back: 'Atrás',
+            close: 'Cerrar',
+            clearCart: 'Vaciar Carrito',
 
-        // Checkout
-        'checkout.title': 'Paiement',
-        'checkout.email': 'Adresse Email',
-        'checkout.deliveryAddress': 'Adresse de Livraison',
-        'checkout.paymentMethod': 'Mode de Paiement',
-        'checkout.payWithMinima': 'Payer avec Minima',
-        'checkout.processing': 'Traitement...',
-        'checkout.success': 'Commande Passée !',
-        'checkout.error': 'Paiement Échoué',
+            // Messages
+            noOrders: 'No hay pedidos todavía',
+            noSentMessages: 'No hay mensajes enviados',
+            checkForOrders: 'Buscar Pedidos',
+            emptyCart: 'Tu carrito está vacío',
+            itemAdded: 'Añadido',
 
-        // Price
-        'price.minimaAmount': 'Montant en Minima',
-        'price.usdAmount': 'Montant en USD',
-        'price.calculating': 'Calcul...',
+            // Errors
+            enterPostalAddress: 'Por favor ingresa una dirección postal completa',
+            enterEmail: 'Por favor ingresa un correo electrónico válido',
+            encryptionFailed: 'Error al encriptar el pedido',
+            paymentFailed: 'Error en el pago',
 
-        // Status
-        'status.pending': 'En Attente',
-        'status.paid': 'Payé',
-        'status.confirmed': 'Confirmé',
-        'status.shipped': 'Expédié',
-        'status.delivered': 'Livré',
+            // Footer
+            poweredBy: 'Impulsado por',
+            bridgeUsdt: 'Puente USDT a Minima',
+        },
+        fr: {
+            // Navigation
+            shop: 'Boutique',
+            mailbox: 'Boîte',
+            cart: 'Panier',
+            inbox: 'Boîte de Réception',
+            sent: 'Envoyé',
+            all: 'Tous',
 
-        // General
-        'general.loading': 'Chargement...',
-        'general.error': 'Erreur',
-        'general.retry': 'Réessayer',
-        'general.close': 'Fermer',
-        'general.confirm': 'Confirmer',
-        'general.cancel': 'Annuler'
+            // Products
+            chooseYourSize: 'Choisissez votre Taille',
+            chooseQuantity: 'Choisissez la Quantité',
+            addToCart: 'Ajouter au Panier',
+            priceInMXUSDT: 'Prix (MXUSDT)',
+            inMinima: 'en Minima',
+
+            // Checkout
+            checkout: 'Payer',
+            payWith: 'Payer avec',
+            shipping: 'Livraison',
+            payNow: 'Payer Maintenant',
+            orderConfirmed: 'Commande Confirmée',
+            thanksForOrder: 'Merci pour votre commande !',
+            orderReference: 'Référence de Commande',
+            transactionId: 'ID de Transaction',
+            keepForRecords: 'Conservez ceci pour vos archives',
+            quoteForSupport: 'Citez cette référence pour le support',
+            postalAddress: 'Adresse Postale',
+            emailAddress: 'Adresse Email',
+            deliveryNote: 'Votre adresse postale a été enregistrée.',
+
+            // Shipping options
+            ukDomestic: 'Royaume-Uni National',
+            international: 'International',
+            electronicDelivery: 'Livraison Électronique',
+            free: 'Gratuit',
+
+            // Payment methods
+            usdt: 'USDT',
+            minima: 'Minima',
+
+            // Order status
+            pending: 'En Attente',
+            paid: 'Payé',
+            confirmed: 'Confirmé',
+            shipped: 'Expédié',
+            delivered: 'Livré',
+
+            // Actions
+            markAsRead: 'Marquer comme Lu',
+            replyToBuyer: 'Répondre à l\'Acheteur',
+            replyToVendor: 'Répondre au Vendeur',
+            sendReply: 'Envoyer la Réponse',
+            back: 'Retour',
+            close: 'Fermer',
+            clearCart: 'Vider le Panier',
+
+            // Messages
+            noOrders: 'Aucune commande encore',
+            noSentMessages: 'Aucun message envoyé',
+            checkForOrders: 'Vérifier les Commandes',
+            emptyCart: 'Votre panier est vide',
+            itemAdded: 'Ajouté',
+
+            // Errors
+            enterPostalAddress: 'Veuillez entrer une adresse postale complète',
+            enterEmail: 'Veuillez entrer une adresse email valide',
+            encryptionFailed: 'Échec du chiffrement de la commande',
+            paymentFailed: 'Échec du paiement',
+
+            // Footer
+            poweredBy: 'Propulsé par',
+            bridgeUsdt: 'Pont USDT vers Minima',
+        }
     }
 };
 
 /**
- * Initialize i18n and load saved locale
- * @returns {Promise<void>}
+ * Set the current locale
+ * @param {string} locale - Locale code (en, es, fr)
+ * @returns {boolean} True if locale was set successfully
  */
-async function initI18n() {
-    try {
-        if (typeof loadSetting === 'function') {
-            const savedLocale = await loadSetting('locale', null);
-            if (savedLocale && SUPPORTED_LOCALES.includes(savedLocale)) {
-                currentLocale = savedLocale;
-            }
+function setLocale(locale) {
+    if (i18nConfig.translations[locale]) {
+        i18nConfig.currentLocale = locale;
+        // Save preference
+        try {
+            localStorage.setItem('minimerch_locale', locale);
+        } catch (e) {
+            console.warn('Could not save locale preference');
         }
-    } catch (err) {
-        console.error('initI18n error:', err);
+        return true;
     }
+    console.warn('Locale not available:', locale);
+    return false;
 }
 
 /**
- * Get current locale
+ * Get the current locale
  * @returns {string} Current locale code
  */
 function getLocale() {
-    return currentLocale;
+    return i18nConfig.currentLocale;
 }
 
 /**
- * Set locale and save to settings
- * @param {string} locale - Locale code (en, es, fr)
- * @returns {Promise<boolean>} Success status
+ * Get available locales
+ * @returns {Array<{code: string, name: string}>} Available locales
  */
-async function setLocale(locale) {
-    if (!SUPPORTED_LOCALES.includes(locale)) {
-        console.warn('Unsupported locale:', locale);
-        return false;
-    }
+function getAvailableLocales() {
+    return [
+        { code: 'en', name: 'English' },
+        { code: 'es', name: 'Español' },
+        { code: 'fr', name: 'Français' }
+    ];
+}
 
-    currentLocale = locale;
-
+/**
+ * Load saved locale preference
+ */
+function loadSavedLocale() {
     try {
-        if (typeof saveSetting === 'function') {
-            await saveSetting('locale', locale);
+        const saved = localStorage.getItem('minimerch_locale');
+        if (saved && i18nConfig.translations[saved]) {
+            i18nConfig.currentLocale = saved;
         }
-        return true;
-    } catch (err) {
-        console.error('setLocale error:', err);
-        return false;
+    } catch (e) {
+        console.warn('Could not load locale preference');
     }
 }
 
 /**
- * Translate a key with optional parameter interpolation
+ * Translate a key
  * @param {string} key - Translation key
- * @param {Object} params - Parameters for interpolation
- * @returns {string} Translated text
+ * @param {Object} [params] - Parameters for interpolation
+ * @returns {string} Translated string
  */
 function t(key, params = {}) {
-    const localeData = translations[currentLocale] || translations.en;
-    let text = localeData[key] || translations.en[key] || key;
+    const locale = i18nConfig.currentLocale;
+    const translations = i18nConfig.translations[locale];
 
-    // Simple parameter interpolation: {paramName}
+    if (!translations) {
+        return key;
+    }
+
+    let text = translations[key];
+
+    if (!text) {
+        // Fallback to English
+        text = i18nConfig.translations.en[key] || key;
+    }
+
+    // Replace parameters
     Object.keys(params).forEach(param => {
-        text = text.replace(new RegExp(`{${param}}`, 'g'), params[param]);
+        text = text.replace(new RegExp(`{{${param}}}`, 'g'), params[param]);
     });
 
     return text;
 }
 
 /**
- * Get supported locales
- * @returns {Array<string>} List of supported locale codes
+ * Translate a key with a default fallback
+ * @param {string} key - Translation key
+ * @param {string} defaultValue - Default value if key not found
+ * @param {Object} [params] - Parameters for interpolation
+ * @returns {string} Translated string
  */
-function getSupportedLocales() {
-    return [...SUPPORTED_LOCALES];
+function tDefault(key, defaultValue, params = {}) {
+    const result = t(key, params);
+    return result === key ? defaultValue : result;
 }
 
 /**
- * Get locale display name
- * @param {string} locale - Locale code
- * @returns {string} Display name
- */
-function getLocaleDisplayName(locale) {
-    const names = {
-        en: 'English',
-        es: 'Español',
-        fr: 'Français'
-    };
-    return names[locale] || locale;
-}
-
-/**
- * Format currency based on locale
+ * Format currency amount
  * @param {number} amount - Amount
  * @param {string} currency - Currency code
  * @returns {string} Formatted currency
  */
 function formatCurrency(amount, currency = 'USD') {
-    try {
-        return new Intl.NumberFormat(currentLocale, {
-            style: 'currency',
-            currency: currency
-        }).format(amount);
-    } catch (err) {
-        return `$${amount.toFixed(2)}`;
-    }
+    const locale = i18nConfig.currentLocale;
+    const formatters = {
+        en: new Intl.NumberFormat('en-US', { style: 'currency', currency }),
+        es: new Intl.NumberFormat('es-ES', { style: 'currency', currency }),
+        fr: new Intl.NumberFormat('fr-FR', { style: 'currency', currency })
+    };
+    const formatter = formatters[locale] || formatters.en;
+    return formatter.format(amount);
 }
 
 /**
- * Format date based on locale
- * @param {Date|number} date - Date to format
+ * Format date
+ * @param {Date|number} date - Date object or timestamp
+ * @param {Object} [options] - Formatting options
  * @returns {string} Formatted date
  */
-function formatDate(date) {
+function formatDate(date, options = {}) {
+    const locale = i18nConfig.currentLocale;
     const d = date instanceof Date ? date : new Date(date);
-    try {
-        return new Intl.DateTimeFormat(currentLocale, {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric'
-        }).format(d);
-    } catch (err) {
-        return d.toLocaleDateString();
-    }
+    return d.toLocaleDateString(locale === 'en' ? 'en-US' : locale + '-' + locale.toUpperCase(), {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        ...options
+    });
 }
 
 /**
- * Format number based on locale
- * @param {number} num - Number to format
- * @returns {string} Formatted number
+ * Format relative time (e.g., "2 hours ago")
+ * @param {number} timestamp - Unix timestamp
+ * @returns {string} Relative time string
  */
-function formatNumber(num) {
-    try {
-        return new Intl.NumberFormat(currentLocale).format(num);
-    } catch (err) {
-        return num.toString();
+function formatRelativeTime(timestamp) {
+    const now = Date.now();
+    const diff = now - timestamp;
+
+    const locale = i18nConfig.currentLocale;
+
+    // Less than a minute
+    if (diff < 60000) {
+        return locale === 'es' ? 'Ahora mismo' : locale === 'fr' ? 'À l\'instant' : 'Just now';
     }
+
+    // Less than an hour
+    if (diff < 3600000) {
+        const mins = Math.floor(diff / 60000);
+        return locale === 'es' ? `${mins}m atrás` : locale === 'fr' ? `Il y a ${mins}m` : `${mins}m ago`;
+    }
+
+    // Less than a day
+    if (diff < 86400000) {
+        const hours = Math.floor(diff / 3600000);
+        return locale === 'es' ? `${hours}h atrás` : locale === 'fr' ? `Il y a ${hours}h` : `${hours}h ago`;
+    }
+
+    // Less than a week
+    if (diff < 604800000) {
+        const days = Math.floor(diff / 86400000);
+        return locale === 'es' ? `${days}d atrás` : locale === 'fr' ? `Il y a ${days}j` : `${days}d ago`;
+    }
+
+    // Default to date
+    return formatDate(timestamp);
 }
+
+// Load saved locale on module load
+loadSavedLocale();

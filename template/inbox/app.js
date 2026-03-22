@@ -8,6 +8,13 @@ const TOKEN_IDS = {
 let currentMessages = [];
 let selectedMessage = null;
 let myPublicKey = null;
+
+function extractTxid(response) {
+    return response?.response?.txpowid
+        || response?.response?.txnid
+        || response?.response?.body?.txpowid
+        || null;
+}
 let pollingInterval = null;
 let dbReady = false;
 let pendingReplyData = null; // Track pending reply for when confirmed
@@ -350,6 +357,8 @@ async function processIncomingMessage(coin) {
     
     if (decrypted.type === 'ORDER') {
         // New order from buyer
+        // cartItems is present for multi-product cart orders; store as JSON in originalOrder
+        const cartItemsJson = decrypted.cartItems ? JSON.stringify(decrypted.cartItems) : null;
         const message = {
             id: Date.now().toString(),
             randomid: randomid,
@@ -366,7 +375,8 @@ async function processIncomingMessage(coin) {
             read: false,
             direction: 'received',
             buyerPublicKey: decrypted.buyerPublicKey || decrypted._senderPublicKey || '',
-            buyerAddress: decrypted.buyerAddress || ''
+            buyerAddress: decrypted.buyerAddress || '',
+            originalOrder: cartItemsJson || ''
         };
         await addMessage(message);
         
@@ -545,7 +555,7 @@ async function sendReply(msg) {
 
 // Complete vendor reply after confirmation (either immediately or after pending approval)
 async function completeVendorReply(response, statusEl, sendBtn) {
-    const txid = response?.response?.txnid || 'confirmed';
+    const txid = extractTxid(response) || '';
     console.log('Reply confirmed with txid:', txid);
     
     if (!pendingReplyData) {
@@ -578,7 +588,7 @@ async function completeVendorReply(response, statusEl, sendBtn) {
     await saveMessageToDb(sentMsg);
     
     if (statusEl) {
-        statusEl.textContent = 'Reply sent! TX: ' + txid.substring(0, 20) + '...';
+        statusEl.textContent = 'Reply sent! ✓';
         statusEl.className = 'reply-status success';
     }
     if (sendBtn) {
@@ -708,6 +718,48 @@ function setupMessageListeners() {
     });
 }
 
+// ── Copy-to-clipboard helpers ────────────────────────────────────────────────
+const COPY_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+const CHECK_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+function truncateTxid(id) {
+    // No truncation — return full value; CSS word-break handles wrapping
+    return id;
+}
+
+function wireCopyBtn(btnId, text) {
+    const btn = document.getElementById(btnId);
+    if (!btn || !text || text === '-') return;
+    btn.innerHTML = COPY_ICON;
+    btn.style.display = 'inline-flex';
+    btn.onclick = () => {
+        const doFlash = () => {
+            btn.innerHTML = CHECK_ICON;
+            btn.classList.add('copied');
+            setTimeout(() => {
+                btn.innerHTML = COPY_ICON;
+                btn.classList.remove('copied');
+            }, 2000);
+        };
+        navigator.clipboard.writeText(text).then(doFlash).catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;opacity:0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            doFlash();
+        });
+    };
+}
+
+function setTxid(fullId) {
+    const el = document.getElementById('modal-txid');
+    if (el) el.textContent = fullId || '-';
+    wireCopyBtn('copy-txid-btn', fullId);
+}
+
 function showMessageDetail(msg) {
     if (!msg) return;
     
@@ -731,7 +783,7 @@ function showMessageDetail(msg) {
     if (msg.direction === 'sent') {
         document.getElementById('modal-title').textContent = '📤 Sent Reply: ' + (msg.originalRef || msg.ref);
         document.getElementById('modal-direction').textContent = '📤 Sent';
-        document.getElementById('modal-txid').textContent = msg.coinid ? msg.coinid.substring(0, 30) + '...' : '-';
+        setTxid(msg.coinid || '-');
         
         document.getElementById('modal-info').innerHTML = `
             <div class="info-row">
@@ -762,7 +814,7 @@ function showMessageDetail(msg) {
     if (isBuyerReply) {
         document.getElementById('modal-title').textContent = '↩️ Buyer Reply: ' + msg.ref;
         document.getElementById('modal-direction').textContent = !msg.read ? '📨 Unread' : '📧 Read';
-        document.getElementById('modal-txid').textContent = msg.coinid ? msg.coinid.substring(0, 30) + '...' : '-';
+        setTxid(msg.coinid || '-');
         
         document.getElementById('modal-info').innerHTML = `
             <div class="info-row">
@@ -813,9 +865,33 @@ function showMessageDetail(msg) {
     // Regular ORDER
     document.getElementById('modal-title').textContent = 'Order: ' + msg.ref;
     document.getElementById('modal-direction').textContent = !msg.read ? '📨 Unread' : '📧 Read';
-    document.getElementById('modal-txid').textContent = msg.coinid ? msg.coinid.substring(0, 30) + '...' : '-';
-    
-    document.getElementById('modal-info').innerHTML = `
+    setTxid(msg.coinid || '-');
+
+    // Try to parse cart items if this is a multi-product order
+    let cartItemsHtml = '';
+    let cartItems = null;
+    try {
+        if (msg.originalOrder) cartItems = JSON.parse(msg.originalOrder);
+    } catch (e) { cartItems = null; }
+
+    if (cartItems && Array.isArray(cartItems) && cartItems.length > 0) {
+        // Multi-item cart order — render each line
+        const rows = cartItems.map(item =>
+            `<div class="cart-order-line">
+                <span class="cart-order-name">${item.product}</span>
+                <span class="cart-order-detail">${item.size}${item.quantity > 1 ? ' &times;' + item.quantity : ''}</span>
+                <span class="cart-order-price">$${item.lineTotal}</span>
+            </div>`
+        ).join('');
+        cartItemsHtml = `
+        <div class="info-row">
+            <span class="info-label">Items:</span>
+            <span class="info-value"></span>
+        </div>
+        <div class="cart-order-lines">${rows}</div>`;
+    } else {
+        // Single-product order — legacy display
+        cartItemsHtml = `
         <div class="info-row">
             <span class="info-label">Product:</span>
             <span class="info-value">${msg.product}</span>
@@ -823,9 +899,13 @@ function showMessageDetail(msg) {
         <div class="info-row">
             <span class="info-label">Size:</span>
             <span class="info-value">${msg.size}</span>
-        </div>
+        </div>`;
+    }
+
+    document.getElementById('modal-info').innerHTML = `
+        ${cartItemsHtml}
         <div class="info-row">
-            <span class="info-label">Amount:</span>
+            <span class="info-label">Total:</span>
             <span class="info-value highlight">$${msg.amount} ${msg.currency}</span>
         </div>
         <div class="info-row">
@@ -844,12 +924,23 @@ function showMessageDetail(msg) {
     
     const copyBtn = document.getElementById('copy-address-btn');
     copyBtn.style.display = 'block';
+    copyBtn.innerHTML = COPY_ICON + ' <span>Copy Delivery Address</span>';
     copyBtn.onclick = () => {
-        navigator.clipboard.writeText(msg.delivery).then(() => {
-            copyBtn.textContent = '✓ Copied!';
+        const doFlash = () => {
+            copyBtn.innerHTML = CHECK_ICON + ' <span>Copied!</span>';
             setTimeout(() => {
-                copyBtn.textContent = '📋 Copy Delivery Address';
+                copyBtn.innerHTML = COPY_ICON + ' <span>Copy Delivery Address</span>';
             }, 2000);
+        };
+        navigator.clipboard.writeText(msg.delivery).then(doFlash).catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = msg.delivery;
+            ta.style.cssText = 'position:fixed;opacity:0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            doFlash();
         });
     };
     

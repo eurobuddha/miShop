@@ -3,6 +3,9 @@ node_modules/
 
 # Build output
 dist/
+release/
+build/icon.iconset/
+build/.node-win-cache/
 
 # OS files
 .DS_Store

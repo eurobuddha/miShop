@@ -1,182 +1,223 @@
 /**
- * Cart module for miniMerch
- * Manages shopping cart state and operations
- * @module cart
+ * @file Cart module for miniMerch
+ * @version 1.0.0
  */
 
-/** @type {Array<Object>} */
-let cart = [];
-
-/** @type {string|null} */
-let selectedShipping = 'uk';
+// @ts-check
 
 /**
- * Get current cart
- * @returns {Array<Object>} Cart items
+ * @typedef {Object} CartItem
+ * @property {string} productName - Product name
+ * @property {number} productIndex - Index in PRODUCTS array
+ * @property {string} sizeId - Size identifier
+ * @property {string} sizeLabel - Display label for size
+ * @property {number} quantity - Quantity
+ * @property {number} unitPrice - Price per unit
+ * @property {number} lineTotal - Total for this line
+ * @property {string} mode - 'weight' or 'units'
+ * @property {string} image - Image URL
+ */
+
+/** @type {Array<CartItem>} */
+let cart = [];
+
+/** @type {string} */
+let selectedShipping = 'uk';
+
+/** @type {number} */
+let shippingFee = 5;
+
+const SHIPPING_RATES = {
+    uk: 5,
+    intl: 20,
+    digital: 0
+};
+
+/**
+ * Get the current cart
+ * @returns {Array<CartItem>} Current cart items
  */
 function getCart() {
     return cart;
 }
 
 /**
- * Set cart (for initialization)
- * @param {Array<Object>} newCart - New cart array
+ * Set the cart (used for clearing)
+ * @param {Array<CartItem>} newCart - New cart contents
  */
 function setCart(newCart) {
-    cart = newCart || [];
-}
-
-/**
- * Get selected shipping option
- * @returns {string} Shipping option ('uk', 'eu', or 'world')
- */
-function getSelectedShipping() {
-    return selectedShipping || 'uk';
-}
-
-/**
- * Set selected shipping option
- * @param {string} option - Shipping option
- */
-function setSelectedShipping(option) {
-    selectedShipping = option || 'uk';
+    cart = newCart;
 }
 
 /**
  * Calculate subtotal of cart items
- * @returns {number} Subtotal amount
+ * @returns {number} Subtotal in USD
  */
 function cartItemsSubtotal() {
-    return cart.reduce((sum, item) => sum + (item.lineTotal || 0), 0);
+    return cart.reduce((sum, item) => sum + item.lineTotal, 0);
 }
 
 /**
- * Calculate shipping fee
- * @returns {number} Shipping fee
+ * Check if cart has physical items
+ * @returns {boolean} True if has physical items
+ */
+function cartHasPhysicalItem() {
+    return true; // All products are physical unless specified otherwise
+}
+
+/**
+ * Get current shipping fee
+ * @returns {number} Shipping fee in USD
  */
 function cartShippingFee() {
-    const shipping = getSelectedShipping();
-    switch (shipping) {
-    case 'uk': return 5;
-    case 'eu': return 8;
-    case 'world': return 12;
-    default: return 5;
-    }
+    if (selectedShipping === 'digital') return 0;
+    if (selectedShipping === 'uk') return SHIPPING_RATES.uk;
+    if (selectedShipping === 'intl') return SHIPPING_RATES.intl;
+    return 0;
+}
+
+/**
+ * Get shipping rate for a method
+ * @param {string} method - Shipping method
+ * @returns {number} Shipping rate
+ */
+function getShippingRate(method) {
+    return SHIPPING_RATES[method] || 0;
 }
 
 /**
  * Calculate grand total
- * @returns {number} Grand total amount
+ * @returns {number} Grand total in USD
  */
 function cartGrandTotal() {
     return cartItemsSubtotal() + cartShippingFee();
 }
 
 /**
- * Get total quantity in cart
- * @returns {number} Total items
+ * Get selected shipping method
+ * @returns {string} Shipping method
  */
-function getCartTotalQuantity() {
-    return cart.reduce((sum, item) => sum + (item.quantity || 1), 0);
+function getSelectedShipping() {
+    return selectedShipping;
 }
 
 /**
- * Get unique item count
- * @returns {number} Number of unique products
+ * Set selected shipping method
+ * @param {string} method - Shipping method
+ */
+function setSelectedShipping(method) {
+    selectedShipping = method;
+    shippingFee = SHIPPING_RATES[method] || 0;
+}
+
+/**
+ * Get current shipping fee
+ * @returns {number} Shipping fee
+ */
+function getShippingFee() {
+    return shippingFee;
+}
+
+/**
+ * Update shipping fee
+ * @param {number} fee - New fee
+ */
+function setShippingFee(fee) {
+    shippingFee = fee;
+}
+
+/**
+ * Add an item to the cart
+ * @param {number} productIndex - Index of product in PRODUCTS array
+ * @param {Object} state - Card state with selectedSize and selectedQuantity
+ * @param {Array<Object>} PRODUCTS - Products array
+ */
+function addToCartByIndex(productIndex, state, PRODUCTS) {
+    const p = PRODUCTS[productIndex];
+    let sizeId, sizeLabel, unitPrice;
+
+    if (p.mode === 'units') {
+        sizeId = 'units_' + state.selectedQuantity;
+        sizeLabel = `${state.selectedQuantity} unit${state.selectedQuantity > 1 ? 's' : ''}`;
+        unitPrice = p.pricePerUnit;
+    } else {
+        sizeId = state.selectedSize;
+        const size = p.sizes.find(s => s.id === sizeId);
+        sizeLabel = `${size.name} (${size.weight}g)`;
+        unitPrice = p.pricePerGram * size.weight;
+    }
+
+    // Increment quantity if same product+size already in cart
+    const existing = cart.find(item => item.productName === p.name && item.sizeId === sizeId);
+    if (existing) {
+        existing.quantity += (p.mode === 'units' ? state.selectedQuantity : 1);
+        existing.lineTotal = existing.unitPrice * existing.quantity;
+    } else {
+        cart.push({
+            productName: p.name,
+            productIndex: productIndex,
+            sizeId,
+            sizeLabel,
+            quantity: p.mode === 'units' ? state.selectedQuantity : 1,
+            unitPrice,
+            lineTotal: unitPrice * (p.mode === 'units' ? state.selectedQuantity : 1),
+            mode: p.mode,
+            image: p.image
+        });
+    }
+}
+
+/**
+ * Remove item from cart
+ * @param {number} index - Cart index to remove
+ */
+function removeFromCart(index) {
+    cart.splice(index, 1);
+}
+
+/**
+ * Clear the entire cart
+ */
+function clearCart() {
+    cart = [];
+}
+
+/**
+ * Get total quantity in cart
+ * @returns {number} Total quantity
+ */
+function getCartTotalQuantity() {
+    return cart.reduce((sum, item) => sum + item.quantity, 0);
+}
+
+/**
+ * Get item count (number of unique items)
+ * @returns {number} Number of unique items
  */
 function getCartItemCount() {
     return cart.length;
 }
 
 /**
- * Add product to cart by index
- * @param {number} productIndex - Product index in PRODUCTS array
- * @param {string} size - Selected size
- * @param {number} quantity - Quantity to add
- * @returns {Object} Result with success status and message
- */
-function addToCartByIndex(productIndex, size, quantity) {
-    if (!PRODUCTS || productIndex >= PRODUCTS.length) {
-        return { success: false, message: 'Invalid product' };
-    }
-
-    const product = PRODUCTS[productIndex];
-    const existingItem = cart.find(item =>
-        item.productIndex === productIndex && item.size === size
-    );
-
-    if (existingItem) {
-        existingItem.quantity += quantity;
-        existingItem.lineTotal = existingItem.quantity * product.price;
-    } else {
-        cart.push({
-            productIndex: productIndex,
-            name: product.name,
-            price: product.price,
-            size: size,
-            quantity: quantity,
-            lineTotal: quantity * product.price
-        });
-    }
-
-    return {
-        success: true,
-        message: `Added ${product.name} (${size}) × ${quantity} to cart`,
-        cartCount: getCartTotalQuantity()
-    };
-}
-
-/**
- * Remove item from cart
- * @param {number} index - Cart item index
- * @returns {boolean} Success status
- */
-function removeFromCart(index) {
-    if (index >= 0 && index < cart.length) {
-        cart.splice(index, 1);
-        return true;
-    }
-    return false;
-}
-
-/**
- * Clear entire cart
- */
-function clearCart() {
-    cart = [];
-    selectedShipping = 'uk';
-}
-
-/**
- * Format cart for order submission
- * @returns {Object} Formatted order data
+ * Format cart for order payload
+ * @returns {Array<Object>} Cart items formatted for order
  */
 function formatCartForOrder() {
-    return {
-        items: cart.map(item => ({
-            name: item.name,
-            price: item.price,
-            size: item.size,
-            quantity: item.quantity,
-            lineTotal: item.lineTotal
-        })),
-        shipping: {
-            option: getSelectedShipping(),
-            fee: cartShippingFee()
-        },
-        subtotal: cartItemsSubtotal(),
-        total: cartGrandTotal()
-    };
+    return cart.map(item => ({
+        product: item.productName,
+        size: item.sizeLabel,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice.toFixed(2),
+        lineTotal: item.lineTotal.toFixed(2)
+    }));
 }
 
 /**
- * Get product summary for display
- * @returns {string} Summary string
+ * Get human-readable product summary
+ * @returns {string} Product summary string
  */
 function getProductSummary() {
-    if (cart.length === 0) return 'No items in cart';
-    if (cart.length === 1) {
-        return `${cart[0].name} (${cart[0].size}) × ${cart[0].quantity}`;
-    }
-    return `${cart.length} items, total: $${cartGrandTotal().toFixed(2)}`;
+    return cart.map(item =>
+        item.quantity > 1 ? `${item.productName} x${item.quantity}` : item.productName
+    ).join(', ');
 }
