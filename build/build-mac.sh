@@ -42,10 +42,29 @@ echo "✓  Output directory: $OUT_DIR"
 echo ""
 echo "🔨  Compiling binary (this takes a minute on first run)..."
 
+# Write a temporary pkg config that explicitly declares the entry point and assets.
+# This ensures web/ and template/ are bundled into the snapshot correctly.
+cat > "$PROJECT_DIR/pkg.config.json" << 'PKGEOF'
+{
+  "pkg": {
+    "scripts": ["src/**/*.js"],
+    "assets": [
+      "web/**/*",
+      "template/**/*",
+      "item.jpg",
+      "ticket.jpg"
+    ]
+  }
+}
+PKGEOF
+
 npx @yao-pkg/pkg src/studio.js \
+    --config pkg.config.json \
     --targets node22-macos-arm64 \
     --output "$OUT_DIR/$BINARY_NAME" \
     --compress GZip
+
+rm -f "$PROJECT_DIR/pkg.config.json"
 
 echo "✓  Binary compiled: $OUT_DIR/$BINARY_NAME"
 

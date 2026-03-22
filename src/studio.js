@@ -39,10 +39,16 @@ function mime(ext) {
 
 function serveFile(res, filePath) {
     if (!fs.existsSync(filePath)) { res.writeHead(404); res.end('Not found'); return; }
-    const ext  = path.extname(filePath).toLowerCase();
-    const stat = fs.statSync(filePath);
-    res.writeHead(200, { 'Content-Type': mime(ext), 'Content-Length': stat.size });
-    fs.createReadStream(filePath).pipe(res);
+    const ext = path.extname(filePath).toLowerCase();
+    try {
+        // Use readFileSync (not createReadStream + statSync) because pkg snapshot
+        // fs.statSync().size returns 0 for bundled assets, causing empty responses.
+        const data = fs.readFileSync(filePath);
+        res.writeHead(200, { 'Content-Type': mime(ext), 'Content-Length': data.length });
+        res.end(data);
+    } catch (e) {
+        res.writeHead(500); res.end('Error reading file: ' + e.message);
+    }
 }
 
 function jsonResponse(res, status, obj) {
