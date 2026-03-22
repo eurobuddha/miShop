@@ -106,7 +106,6 @@ body {
 .carousel-track {
     flex: 1;
     min-width: 0;
-    overflow: hidden;
 }
 
 /* Arrows hidden by default (grid mode) — JS shows them in carousel mode */
@@ -169,24 +168,21 @@ body {
 /* ── Main content & product grid ────────────────────────────────────────────── */
 .main-content {
     width: 100%;
-    min-width: 0;
 }
 
-/* Single-row flex — JS controls card width via --card-width and hides
-   out-of-page cards with .carousel-hidden. overflow:hidden clips them. */
+/* Responsive grid: auto-fit fills as many columns as fit at ≥280px each */
 .product-grid {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: nowrap;
-    gap: var(--grid-gap, 1.25rem);
-    padding: 1.25rem;
-    overflow: hidden;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.5rem;
+    padding: 1.5rem;
+    max-width: 1600px;
+    margin: 0 auto;
     width: 100%;
     box-sizing: border-box;
-    align-items: stretch;
 }
 
-/* Card hidden when outside current page (toggled by JS) */
+/* Card hidden in carousel mode (toggled by JS) */
 .carousel-hidden {
     display: none !important;
 }
@@ -196,10 +192,7 @@ body {
     background: var(--bg-white);
     border-radius: var(--radius-lg);
     padding: 0;
-    /* Width set by JS via CSS custom property; falls back to 280px */
-    flex: 0 0 var(--card-width, 280px);
-    width: var(--card-width, 280px);
-    min-width: 0;
+    width: 100%;
     box-shadow: var(--shadow-md);
     border: 1px solid var(--border);
     overflow: hidden;
@@ -938,16 +931,18 @@ body {
         font-size: 1.25rem;
     }
 
-    /* Single-card mobile layout — JS sets --card-width to fill track */
+    /* Single-column grid = carousel layout */
     .product-grid {
+        grid-template-columns: 1fr;
         padding: 0.75rem;
         gap: 0;
     }
 
-    /* Restore readable max card width on phones */
+    /* Restore max card width in carousel mode */
     .product-card {
         max-width: 480px;
         margin: 0 auto;
+        width: 100%;
     }
 
     /* Show arrows in carousel mode (JS controls display:none/flex per arrow) */
