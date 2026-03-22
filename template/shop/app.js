@@ -1431,29 +1431,6 @@ function updatePayButton() {
         payBtn.disabled = true;
     }
 }
-    
-    const totalPrice = productPrice + shippingFee;
-    
-    let isAddressValid;
-    if (selectedShipping === 'digital') {
-        isAddressValid = emailAddress.includes('@') && emailAddress.length > 0;
-    } else {
-        isAddressValid = postalAddress.length >= 10;
-    }
-    
-    if (mxToUsdRate > 0) {
-        if (selectedPaymentMethod === 'USDT') {
-            payAmount.textContent = `${totalPrice.toFixed(2)} USD = ${totalPrice.toFixed(2)} USDT`;
-        } else {
-            const minimaAmount = totalPrice / mxToUsdRate * 1.10;
-            payAmount.textContent = `${totalPrice.toFixed(2)} USD = ${minimaAmount.toFixed(4)} Minima`;
-        }
-        payBtn.disabled = !isAddressValid;
-    } else {
-        payAmount.textContent = '--';
-        payBtn.disabled = true;
-    }
-}
 
 function showPaymentStatus(message, type) {
     const statusEl = document.getElementById('payment-status');
