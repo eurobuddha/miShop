@@ -6,7 +6,7 @@ const TOKEN_IDS = {
     MINIMA: '0x00'
 };
 
-const DEFAULT_MINIMA_PRICE = 0.004;
+const DEFAULT_MINIMA_PRICE = 0.0052; // updated Mar 2026
 
 const SHIPPING_RATES = {
     uk: 5,
@@ -809,7 +809,7 @@ async function processPayment() {
         const tokenName = selectedPaymentMethod === 'USDT' ? 'USDT' : 'Minima';
         const sendAmount = selectedPaymentMethod === 'USDT'
             ? totalPrice
-            : totalPrice / mxToUsdRate * 1.10;
+            : totalPrice / mxToUsdRate * (1 + SLIPPAGE_RATE / 100);
 
         // One shared order reference for the whole cart
         lastOrderReference = generateOrderReference('ORDER');
@@ -1262,7 +1262,7 @@ function updateCardPrice(i) {
 
     const minimaPriceEl = el('price-minima');
     if (minimaPriceEl) {
-        if (mxToUsdRate > 0 && mxToUsdRate !== 1) {
+        if (mxToUsdRate > 0) {
             minimaPriceEl.textContent = `${(productPrice / mxToUsdRate).toFixed(4)} Minima`;
         } else {
             minimaPriceEl.textContent = 'Loading...';
@@ -1400,7 +1400,7 @@ function openCheckoutModal() {
     const itemsSubtotal = cartItemsSubtotal();
     const fee = cartShippingFee();
     const totalPrice = itemsSubtotal + fee;
-    const minimaTotal = totalPrice / mxToUsdRate * 1.10;
+    const minimaTotal = totalPrice / mxToUsdRate * (1 + SLIPPAGE_RATE / 100);
 
     // Render per-item lines in checkout summary
     const linesEl = document.getElementById('checkout-cart-lines');
@@ -1419,8 +1419,8 @@ function openCheckoutModal() {
     document.getElementById('summary-shipping').textContent = fee === 0 ? 'Free' : `$${fee.toFixed(2)} USDT`;
     document.getElementById('summary-usd').textContent = `$${totalPrice.toFixed(2)} USDT`;
 
-    if (mxToUsdRate > 0 && mxToUsdRate !== 1) {
-        document.getElementById('summary-minima').innerHTML = `${minimaTotal.toFixed(4)} Minima<br><span class="slippage-note">(+10% slippage)</span>`;
+    if (mxToUsdRate > 0) {
+        document.getElementById('summary-minima').innerHTML = `${minimaTotal.toFixed(4)} Minima<br><span class="slippage-note">(+${SLIPPAGE_RATE}% slippage)</span>`;
         document.getElementById('pay-amount').textContent = `${totalPrice.toFixed(2)} USD = ${minimaTotal.toFixed(4)} Minima`;
     } else {
         document.getElementById('summary-minima').textContent = 'Loading...';
@@ -1442,14 +1442,14 @@ function updateCheckoutSummary() {
     const itemsSubtotal = cartItemsSubtotal();
     const fee = cartShippingFee();
     const totalPrice = itemsSubtotal + fee;
-    const minimaTotal = totalPrice / mxToUsdRate * 1.10;
+    const minimaTotal = totalPrice / mxToUsdRate * (1 + SLIPPAGE_RATE / 100);
 
     document.getElementById('summary-product').textContent = `$${itemsSubtotal.toFixed(2)} USDT`;
     document.getElementById('summary-shipping').textContent = fee === 0 ? 'Free' : `$${fee.toFixed(2)} USDT`;
     document.getElementById('summary-usd').textContent = `$${totalPrice.toFixed(2)} USDT`;
 
-    if (mxToUsdRate > 0 && mxToUsdRate !== 1) {
-        document.getElementById('summary-minima').innerHTML = `${minimaTotal.toFixed(4)} Minima<br><span class="slippage-note">(+10% slippage)</span>`;
+    if (mxToUsdRate > 0) {
+        document.getElementById('summary-minima').innerHTML = `${minimaTotal.toFixed(4)} Minima<br><span class="slippage-note">(+${SLIPPAGE_RATE}% slippage)</span>`;
         document.getElementById('pay-amount').textContent = `${totalPrice.toFixed(2)} USD = ${minimaTotal.toFixed(4)} Minima`;
     }
 }
@@ -1494,7 +1494,7 @@ function updatePayButton() {
         if (selectedPaymentMethod === 'USDT') {
             payAmount.textContent = `${totalPrice.toFixed(2)} USD = ${totalPrice.toFixed(2)} USDT`;
         } else {
-            const minimaAmount = totalPrice / mxToUsdRate * 1.10;
+            const minimaAmount = totalPrice / mxToUsdRate * (1 + SLIPPAGE_RATE / 100);
             payAmount.textContent = `${totalPrice.toFixed(2)} USD = ${minimaAmount.toFixed(4)} Minima`;
         }
         payBtn.disabled = !isAddressValid || cart.length === 0;
