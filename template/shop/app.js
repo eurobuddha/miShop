@@ -1072,8 +1072,12 @@ function completePayment(payResponse, payBtn) {
     // Stamp real payment TXID onto the order record (non-blocking, safe)
     stampPaymentTxid(ref, txid);
 
-    // Clear cart — covers both immediate and pending-approval payment paths
+    // Clear cart and reset shipping state — covers both immediate and pending-approval paths
     clearCart();
+    setSelectedShipping('uk');
+    document.querySelectorAll('.shipping-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.shipping === 'uk');
+    });
     updateCartBadge();
 
     setTimeout(() => {

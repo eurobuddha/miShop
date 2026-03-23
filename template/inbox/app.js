@@ -607,6 +607,16 @@ async function completeVendorReply(response, statusEl, sendBtn) {
 
 // ============ UI FUNCTIONS ============
 
+function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function formatTime(timestamp) {
     const date = new Date(timestamp);
     const now = new Date();
@@ -679,11 +689,11 @@ function renderInbox() {
             <div class="message-icon">${isSent ? '📤' : (isBuyerReply ? '↩️' : (msg.read ? '📧' : '📨'))}</div>
             <div class="message-preview">
                 <div class="message-ref">${isSent ? '↩️ ' : ''}${isSent ? msg.originalRef || msg.ref : (isBuyerReply ? '↩️ ' : '') + msg.ref}</div>
-                <div class="message-product">${isSent ? (msg.originalProduct || msg.originalOrder || 'Reply') : (isBuyerReply ? 'Buyer Reply' : msg.product)}</div>
+                <div class="message-product">${isSent ? (escapeHtml(msg.originalProduct || msg.originalOrder) || 'Reply') : (isBuyerReply ? 'Buyer Reply' : escapeHtml(msg.product))}</div>
                 <div class="message-meta">
                     ${isSent ? '<span class="message-type sent-type">📤 Sent Reply</span>' : (isBuyerReply ? '<span class="message-type">Buyer Reply</span>' : `
-                    <span class="message-size">${msg.size}</span>
-                    <span class="message-amount">$${msg.amount} ${msg.currency}</span>
+                    <span class="message-size">${escapeHtml(msg.size)}</span>
+                    <span class="message-amount">$${escapeHtml(msg.amount)} ${escapeHtml(msg.currency)}</span>
                     `)}
                 </div>
             </div>
@@ -793,7 +803,7 @@ function showMessageDetail(msg) {
             </div>
             <div class="info-row">
                 <span class="info-label">Original Order:</span>
-                <span class="info-value">${msg.originalProduct || msg.originalOrder || 'N/A'}</span>
+                <span class="info-value">${escapeHtml(msg.originalProduct || msg.originalOrder) || 'N/A'}</span>
             </div>
             <div class="info-row">
                 <span class="info-label">Time Sent:</span>
@@ -801,7 +811,7 @@ function showMessageDetail(msg) {
             </div>
             <div class="reply-content">
                 <h4>Your Reply:</h4>
-                <p class="reply-message">${msg.message || 'No message'}</p>
+                <p class="reply-message">${escapeHtml(msg.message) || 'No message'}</p>
             </div>
         `;
         
@@ -832,7 +842,7 @@ function showMessageDetail(msg) {
             </div>
             <div class="reply-content">
                 <h4>Buyer's Message:</h4>
-                <p class="reply-message">${msg.delivery || msg.message || 'No message'}</p>
+                <p class="reply-message">${escapeHtml(msg.delivery || msg.message) || 'No message'}</p>
             </div>
         `;
         
@@ -879,9 +889,9 @@ function showMessageDetail(msg) {
         // Multi-item cart order — render each line
         const rows = cartItems.map(item =>
             `<div class="cart-order-line">
-                <span class="cart-order-name">${item.product}</span>
-                <span class="cart-order-detail">${item.size}${item.quantity > 1 ? ' &times;' + item.quantity : ''}</span>
-                <span class="cart-order-price">$${item.lineTotal}</span>
+                <span class="cart-order-name">${escapeHtml(item.product)}</span>
+                <span class="cart-order-detail">${escapeHtml(item.size)}${item.quantity > 1 ? ' &times;' + escapeHtml(item.quantity) : ''}</span>
+                <span class="cart-order-price">$${escapeHtml(item.lineTotal)}</span>
             </div>`
         ).join('');
         cartItemsHtml = `
@@ -895,11 +905,11 @@ function showMessageDetail(msg) {
         cartItemsHtml = `
         <div class="info-row">
             <span class="info-label">Product:</span>
-            <span class="info-value">${msg.product}</span>
+            <span class="info-value">${escapeHtml(msg.product)}</span>
         </div>
         <div class="info-row">
             <span class="info-label">Size:</span>
-            <span class="info-value">${msg.size}</span>
+            <span class="info-value">${escapeHtml(msg.size)}</span>
         </div>`;
     }
 
@@ -907,7 +917,7 @@ function showMessageDetail(msg) {
         ${cartItemsHtml}
         <div class="info-row">
             <span class="info-label">Total:</span>
-            <span class="info-value highlight">$${msg.amount} ${msg.currency}</span>
+            <span class="info-value highlight">$${escapeHtml(msg.amount)} ${escapeHtml(msg.currency)}</span>
         </div>
         <div class="info-row">
             <span class="info-label">Shipping:</span>
@@ -919,7 +929,7 @@ function showMessageDetail(msg) {
         </div>
         <div class="info-row delivery">
             <span class="info-label">Delivery Address:</span>
-            <span class="info-value delivery-address">${msg.delivery}</span>
+            <span class="info-value delivery-address">${escapeHtml(msg.delivery)}</span>
         </div>
     `;
     
