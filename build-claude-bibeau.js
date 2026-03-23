@@ -2,11 +2,8 @@ const path = require('path');
 const fs = require('fs');
 const { build } = require('./src/studio-builder');
 
-// Load vendor config
-const vendorConfig = JSON.parse(fs.readFileSync('vendor.config.json', 'utf8'));
-
-// Define 8 products for Claude Bibeau Artwork
-const products = [
+// Base products for Claude Bibeau Artwork (repeated 5x for 40 total)
+const baseProducts = [
     { name: 'Cloud',   description: 'Oil on canvas', mode: 'units', pricePerUnit: 1, maxUnits: 1, weight: 1 },
     { name: 'Ocean',   description: 'Oil on canvas', mode: 'units', pricePerUnit: 1, maxUnits: 1, weight: 1 },
     { name: 'Shrub',   description: 'Oil on canvas', mode: 'units', pricePerUnit: 1, maxUnits: 1, weight: 1 },
@@ -17,8 +14,8 @@ const products = [
     { name: 'Beach',   description: 'Oil on canvas', mode: 'units', pricePerUnit: 1, maxUnits: 1, weight: 1 }
 ];
 
-// Image paths (from images folder)
-const imagePaths = [
+// Base 8 image paths (from images folder)
+const baseImagePaths = [
     path.join(__dirname, 'images', 'app_022.jpg'),
     path.join(__dirname, 'images', 'app_023.jpg'),
     path.join(__dirname, 'images', 'app_027.jpg'),
@@ -29,34 +26,58 @@ const imagePaths = [
     path.join(__dirname, 'images', 'app_078.jpg')
 ];
 
+// Repeat 5 times for 40 products total
+// Each repeat appends a series number to the product name (Series I–V)
+const REPEATS = 5;
+const seriesNames = ['I', 'II', 'III', 'IV', 'V'];
+
+const products = [];
+const imagePaths = [];
+
+for (let r = 0; r < REPEATS; r++) {
+    for (let i = 0; i < baseProducts.length; i++) {
+        products.push({
+            ...baseProducts[i],
+            name: `${baseProducts[i].name} (Series ${seriesNames[r]})`,
+        });
+        imagePaths.push(baseImagePaths[i]);
+    }
+}
+
 // Ensure dist directory exists
 const distDir = path.join(__dirname, 'dist');
 if (!fs.existsSync(distDir)) fs.mkdirSync(distDir, { recursive: true });
 
 // Build the MiniDapps
 async function buildShop() {
-    console.log('\\n🎨 Building Claude Bibeau Artwork MiniDapps...\\n');
+    console.log(`\n🎨 Building Claude Bibeau Artwork MiniDapps (${products.length} products)...\n`);
 
     try {
         const result = await build(
             products,
             imagePaths,
-            10,                      // slippage
-            'ClaudeBibeauArtwork',   // shop name
+            10,                                     // slippage
+            'Claude Bibeau Artworks',               // shop name
             distDir
         );
 
-        console.log('\\n✅ Build Complete!');
+        console.log('\n✅ Build Complete!');
         console.log('─────────────────────────────────────────');
         console.log(`Shop:  ${result.shopFile}  (${(result.shopSize / 1024).toFixed(1)} KB)`);
         console.log(`Inbox: ${result.inboxFile} (${(result.inboxSize / 1024).toFixed(1)} KB)`);
         console.log('─────────────────────────────────────────');
-        console.log('\\n8 Original Oil Paintings:');
-        products.forEach((p, i) => console.log(`  ${i + 1}. ${p.name}`));
-        console.log('\\nLocation: dist/');
+        console.log(`\n${products.length} Original Oil Paintings (8 × ${REPEATS} series):`);
+        for (let r = 0; r < REPEATS; r++) {
+            console.log(`\n  Series ${seriesNames[r]}:`);
+            for (let i = 0; i < baseProducts.length; i++) {
+                const idx = r * baseProducts.length + i;
+                console.log(`    ${idx + 1}. ${products[idx].name}`);
+            }
+        }
+        console.log('\nLocation: dist/');
 
     } catch (err) {
-        console.error('\\n❌ Build failed:', err.message);
+        console.error('\n❌ Build failed:', err.message);
         process.exit(1);
     }
 }

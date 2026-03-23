@@ -51,9 +51,9 @@ miniMerch is a shop builder for the Minima blockchain. It creates two MiniDapps:
 | **miniMerchInbox** | You (vendor) | Receive encrypted orders, read delivery addresses, manage orders |
 
 **Key features:**
-- Up to **8 products per shop** with images, descriptions, and prices
+- Up to **40 products per shop** with images, descriptions, and prices
 - **Shopping cart** — buyers add multiple items, single combined checkout
-- **Responsive layout** — grid on desktop, swipeable carousel on mobile
+- **Responsive layout** — grid on desktop, scrollable single-column on mobile
 - **Encrypted orders** — delivery addresses never touch the blockchain
 - **Live Minima pricing** via CoinMarketCap or CoinGecko
 - **Vendor-configurable Minima slippage** buffer at checkout
@@ -98,7 +98,7 @@ Once the browser is open:
 **Build Shop tab:**
 1. Enter a shop name and Minima slippage % (default 10%)
 2. Click **+ Add Product** — fill in name, mode, price, quantity, description, drop an image
-3. Drag the ⠿ handle to reorder products (up to 8)
+3. Drag the ⠿ handle to reorder products (up to 40)
 4. Click **Build Shop**
 5. Download the Shop ZIP (give to buyers) and Inbox ZIP (keep for yourself)
 
@@ -210,7 +210,7 @@ mini-merch generate -n "Digital Guide" -m units -p 12 -u 100 -d "PDF bundle" --s
 
 ---
 
-### Multi-product shop (up to 8 products)
+### Multi-product shop (up to 40 products)
 
 Use the interactive wizard — it prompts you for each product one by one:
 
@@ -257,7 +257,7 @@ mini-merch generate-multi
 
 Buyers can add multiple products to a cart before checking out:
 
-1. **Browse** — products shown as a grid on desktop, swipeable carousel on mobile
+1. **Browse** — products shown as a grid on desktop, scrollable list on mobile
 2. **Add to Cart** — each product card has an Add to Cart button; same product + size increments quantity
 3. **Cart** — tap the cart icon in the header to review items, update quantities, or remove items
 4. **Checkout** — one shipping choice, one delivery address, one payment for everything in the cart
@@ -310,7 +310,7 @@ Your inbox needs your Minima node to be online to receive orders. If the node is
    └─ MiniDapp fetches live Minima ↔ USD price
 
 2. BUYER BROWSES AND ADDS TO CART
-   └─ Grid view on desktop, swipeable carousel on mobile
+   └─ Grid view on desktop, scrollable list on mobile
    └─ Add to Cart button on each product card
    └─ Cart shows combined total + one shipping option
 
@@ -394,7 +394,7 @@ mini-merch generate [options]
 
 ### `mini-merch generate-multi`
 
-Interactive wizard for multi-product shops (up to 8 products).
+Interactive wizard for multi-product shops (up to 40 products).
 
 ```bash
 mini-merch generate-multi

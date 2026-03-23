@@ -162,7 +162,7 @@ const INBOX_CONFIG = {
 `;
 }
 
-// products: single product object (legacy) or array of up to 8
+// products: single product object (legacy) or array of up to 40
 // imagePaths: single path string (legacy) or array of paths matching products
 async function buildShopMiniDapp(products, imagePaths, slippageRate) {
     const productArray = Array.isArray(products) ? products : [products];
@@ -615,7 +615,7 @@ async function runGenerateMulti() {
 ╔═══════════════════════════════════════════════════════════╗
 ║          🛒 miniMerch Multi-Product Wizard 🛒             ║
 ╠═══════════════════════════════════════════════════════════╣
-║  Add up to 8 products. Leave Name blank when done.        ║
+║  Add up to 40 products. Leave Name blank when done.       ║
 ╚═══════════════════════════════════════════════════════════╝
 `);
 
@@ -624,14 +624,14 @@ async function runGenerateMulti() {
     const products = [];
     const imagePaths = [];
 
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 40; i++) {
         const product = await promptProduct(rl, i);
         if (!product) break;
         imagePaths.push(product.image || path.join(__dirname, '..', 'template', 'shop', 'icon.png'));
         delete product.image;
         products.push(product);
         console.log(`  ✓ Added: ${product.name}`);
-        if (i < 7) {
+        if (i < 39) {
             const more = (await ask(rl, '\n  Add another product? [Y/n]: ')).trim().toLowerCase();
             if (more === 'n') break;
         }
@@ -743,7 +743,7 @@ async function main() {
 
     program
         .command('generate-multi')
-        .description('Interactively build a shop with up to 8 products (carousel)')
+        .description('Interactively build a shop with up to 40 products')
         .action(async () => await runGenerateMulti());
 
     program

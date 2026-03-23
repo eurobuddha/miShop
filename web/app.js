@@ -84,7 +84,7 @@ async function saveSetup(e) {
 // ── Product cards ─────────────────────────────────────────────────────────────
 function addProductCard() {
     const list = document.getElementById('product-list');
-    if (list.children.length >= 8) return;
+    if (list.children.length >= 40) return;
 
     const template = document.getElementById('product-card-template');
     const card     = template.content.cloneNode(true).querySelector('.product-card');
@@ -109,7 +109,7 @@ function renumberCards() {
         card.querySelector('.card-number').textContent = `Product ${i + 1}`;
     });
     const count = document.querySelectorAll('.product-card').length;
-    document.getElementById('product-count-label').textContent = `${count} / 8 product${count > 1 ? 's' : ''}`;
+    document.getElementById('product-count-label').textContent = `${count} / 40 product${count > 1 ? 's' : ''}`;
 
     // Disable remove button when only 1 card
     document.querySelectorAll('.remove-btn').forEach(btn => {
@@ -119,7 +119,7 @@ function renumberCards() {
 
 function updateAddButton() {
     const count = document.querySelectorAll('.product-card').length;
-    document.getElementById('add-product-btn').disabled = count >= 8;
+    document.getElementById('add-product-btn').disabled = count >= 40;
 }
 
 // ── Wire a single card's interactions ────────────────────────────────────────

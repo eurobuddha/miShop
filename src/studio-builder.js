@@ -115,9 +115,13 @@ const VENDOR_CONFIG = {
 
 function generateShopDappConf(shopName, products) {
     const headline = shopName || (products[0] ? products[0].name : 'miniMerch Shop');
-    const desc     = products.length > 1
-        ? `${products.length} products — ${products.map(p => p.name).join(', ')}`
-        : (products[0] ? products[0].description || products[0].name : 'miniMerch shop');
+    let desc;
+    if (products.length > 1) {
+        const full = `${products.length} products — ${products.map(p => p.name).join(', ')}`;
+        desc = full.length > 200 ? full.substring(0, 197) + '...' : full;
+    } else {
+        desc = products[0] ? products[0].description || products[0].name : 'miniMerch shop';
+    }
     return JSON.stringify({
         name:        'miniMerch',
         version:     '1.0.0',

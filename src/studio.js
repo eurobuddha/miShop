@@ -195,8 +195,8 @@ async function handleBuild(req, res) {
         if (!products || !products.length) {
             return jsonResponse(res, 400, { error: 'No products provided' });
         }
-        if (products.length > 8) {
-            return jsonResponse(res, 400, { error: 'Maximum 8 products per shop' });
+        if (products.length > 40) {
+            return jsonResponse(res, 400, { error: 'Maximum 40 products per shop' });
         }
 
         // Validate each product
