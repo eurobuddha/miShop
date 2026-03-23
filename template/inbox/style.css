@@ -189,6 +189,74 @@ body {
     background: var(--blue);
 }
 
+/* Inbox Toolbar */
+.inbox-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.export-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.export-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: var(--bg-white);
+    color: var(--text-medium);
+}
+
+.export-btn:hover {
+    background: var(--bg-gray);
+    border-color: var(--border-dark);
+    color: var(--text-dark);
+}
+
+.export-btn.json-btn:hover {
+    border-color: var(--blue);
+    color: var(--blue);
+}
+
+.export-btn.csv-btn:hover {
+    border-color: var(--success);
+    color: var(--success);
+}
+
+.filter-actions {
+    display: flex;
+    align-items: center;
+}
+
+.status-filter {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-family: inherit;
+    font-size: 0.8rem;
+    background: var(--bg-white);
+    color: var(--text-dark);
+    cursor: pointer;
+}
+
+.status-filter:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
 /* Inbox List */
 .inbox-list {
     max-height: 500px;

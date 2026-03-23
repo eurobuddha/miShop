@@ -1152,7 +1152,8 @@ function exportToJSON(messages) {
         coinid: msg.coinid,
         direction: msg.direction,
         read: msg.read,
-        buyerPublicKey: msg.buyerPublicKey
+        buyerPublicKey: msg.buyerPublicKey,
+        buyerAddress: msg.buyerAddress
     }));
 
     return JSON.stringify(data, null, 2);
@@ -1164,7 +1165,7 @@ function exportToJSON(messages) {
  * @returns {string} CSV string
  */
 function exportToCSV(messages) {
-    const headers = ['Reference', 'Type', 'Product', 'Size', 'Amount', 'Currency', 'Shipping', 'Status', 'Date', 'Time', 'TX ID'];
+    const headers = ['Reference', 'Type', 'Product', 'Size', 'Amount', 'Currency', 'Shipping', 'Status', 'Date', 'Time', 'TX ID', 'Buyer Address', 'Buyer Email/Delivery'];
 
     const rows = messages.map(msg => [
         msg.ref,
@@ -1177,7 +1178,9 @@ function exportToCSV(messages) {
         msg.status || 'PENDING',
         new Date(msg.timestamp).toLocaleDateString(),
         new Date(msg.timestamp).toLocaleTimeString(),
-        msg.coinid
+        msg.coinid,
+        msg.buyerPublicKey || '',
+        msg.buyerAddress || msg.delivery || ''
     ]);
 
     // Escape values with commas
