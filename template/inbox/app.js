@@ -640,6 +640,7 @@ function getShippingLabel(shipping) {
 }
 
 let currentView = 'inbox';
+let currentStatusFilter = '';
 
 function renderInbox() {
     const inboxList = document.getElementById('inbox-list');
@@ -665,8 +666,12 @@ function renderInbox() {
     } else if (currentView === 'sent') {
         messages = currentMessages.filter(m => m.direction === 'sent');
     }
-    
-    console.log('RENDER:', messages.length, 'messages for view:', currentView);
+
+    if (currentStatusFilter) {
+        messages = messages.filter(m => m.status === currentStatusFilter);
+    }
+
+    console.log('RENDER:', messages.length, 'messages for view:', currentView, 'status:', currentStatusFilter || 'all');
     
     if (messages.length === 0) {
         inboxList.innerHTML = `
@@ -993,6 +998,11 @@ function setupEventListeners() {
             tab.classList.add('active');
             renderInbox();
         });
+    });
+
+    document.getElementById('status-filter').addEventListener('change', (e) => {
+        currentStatusFilter = e.target.value;
+        renderInbox();
     });
     
     document.querySelector('.modal-close').addEventListener('click', closeModal);
