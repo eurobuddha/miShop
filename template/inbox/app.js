@@ -921,7 +921,7 @@ function showMessageDetail(msg) {
         </div>
         <div class="info-row">
             <span class="info-label">Shipping:</span>
-            <span class="info-value">${getShippingLabel(msg.shipping)}</span>
+            <span class="info-value">${escapeHtml(getShippingLabel(msg.shipping))}</span>
         </div>
         <div class="info-row">
             <span class="info-label">Time:</span>
