@@ -617,6 +617,18 @@ async function sendBuyerReply() {
     }
 }
 
+// ============ UTILITIES ============
+
+function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 // ============ CART ============
 
 function cartItemsSubtotal() {
@@ -720,8 +732,8 @@ function openCartModal() {
         listEl.innerHTML = cart.map((item, idx) => `
             <div class="cart-item" data-index="${idx}">
                 <div class="cart-item-info">
-                    <span class="cart-item-name">${item.productName}</span>
-                    <span class="cart-item-detail">${item.sizeLabel}${item.quantity > 1 && item.mode !== 'units' ? ' &times; ' + item.quantity : ''}</span>
+                    <span class="cart-item-name">${escapeHtml(item.productName)}</span>
+                    <span class="cart-item-detail">${escapeHtml(item.sizeLabel)}${item.quantity > 1 && item.mode !== 'units' ? ' &times; ' + item.quantity : ''}</span>
                 </div>
                 <div class="cart-item-right">
                     <span class="cart-item-price">$${item.lineTotal.toFixed(2)}</span>
@@ -1447,7 +1459,7 @@ function openCheckoutModal() {
     if (linesEl) {
         linesEl.innerHTML = cart.map(item => `
             <div class="summary-item checkout-line">
-                <span>${item.productName} &mdash; ${item.sizeLabel}${item.quantity > 1 && item.mode !== 'units' ? ' &times;' + item.quantity : ''}</span>
+                <span>${escapeHtml(item.productName)} &mdash; ${escapeHtml(item.sizeLabel)}${item.quantity > 1 && item.mode !== 'units' ? ' &times;' + item.quantity : ''}</span>
                 <span>$${item.lineTotal.toFixed(2)}</span>
             </div>
         `).join('');
@@ -1797,12 +1809,12 @@ function renderMessageList(messages, type) {
         <div class="message-item ${msg.direction === 'received' && !msg.read ? 'unread' : ''} ${isBuyerReply ? 'buyer-reply' : ''}" data-id="${msg.id}">
             <div class="message-icon">${isBuyerReply ? '↩️' : (isReply ? '↩️' : (msg.direction === 'received' ? '📨' : '📤'))}</div>
             <div class="message-preview">
-                <div class="message-subject">${msg.subject || msg.product || 'Order: ' + msg.ref}</div>
+                <div class="message-subject">${escapeHtml(msg.subject || msg.product) || 'Order: ' + escapeHtml(msg.ref)}</div>
                 <div class="message-meta">
-                    <span class="message-ref">${msg.ref}</span>
-                    ${isBuyerReply ? '<span class="message-type">Your Reply</span>' : 
-                      (isReply ? '<span class="message-type">Vendor Reply</span>' : 
-                      `<span class="message-amount">$${msg.amount} ${msg.currency}</span>`)}
+                    <span class="message-ref">${escapeHtml(msg.ref)}</span>
+                    ${isBuyerReply ? '<span class="message-type">Your Reply</span>' :
+                      (isReply ? '<span class="message-type">Vendor Reply</span>' :
+                      `<span class="message-amount">$${escapeHtml(msg.amount)} ${escapeHtml(msg.currency)}</span>`)}
                 </div>
             </div>
             <div class="message-time">${formatTime(msg.timestamp)}</div>
@@ -1829,12 +1841,12 @@ function renderMessageDetail(msg) {
             <div class="message-info">
                 <div class="info-row">
                     <span class="info-label">Order Ref:</span>
-                    <span class="info-value">${msg.ref}</span>
+                    <span class="info-value">${escapeHtml(msg.ref)}</span>
                 </div>
                 ${msg.product ? `
                 <div class="info-row">
                     <span class="info-label">Re:</span>
-                    <span class="info-value">${msg.product}</span>
+                    <span class="info-value">${escapeHtml(msg.product)}</span>
                 </div>
                 ` : ''}
                 <div class="info-row">
@@ -1842,10 +1854,10 @@ function renderMessageDetail(msg) {
                     <span class="info-value">${new Date(msg.timestamp).toLocaleString()}</span>
                 </div>
             </div>
-            
+
             <div class="reply-content">
                 <h4>Message:</h4>
-                <p class="reply-message">${msg.message}</p>
+                <p class="reply-message">${escapeHtml(msg.message)}</p>
             </div>
             
             <div class="message-actions">
@@ -1873,12 +1885,12 @@ function renderMessageDetail(msg) {
             <div class="message-info">
                 <div class="info-row">
                     <span class="info-label">Order Ref:</span>
-                    <span class="info-value">${msg.ref}</span>
+                    <span class="info-value">${escapeHtml(msg.ref)}</span>
                 </div>
                 ${msg.product ? `
                 <div class="info-row">
                     <span class="info-label">Re:</span>
-                    <span class="info-value">${msg.product}</span>
+                    <span class="info-value">${escapeHtml(msg.product)}</span>
                 </div>
                 ` : ''}
                 <div class="info-row">
@@ -1889,14 +1901,14 @@ function renderMessageDetail(msg) {
 
             <div class="reply-content">
                 <h4>Your Message:</h4>
-                <p class="reply-message">${msg.message}</p>
+                <p class="reply-message">${escapeHtml(msg.message)}</p>
             </div>
 
             ${msg.coinid ? `
             <div class="message-tx">
                 <span class="tx-label">TX ID:</span>
                 <div class="tx-copy-row">
-                    <span class="tx-id" id="detail-txid">${msg.coinid}</span>
+                    <span class="tx-id" id="detail-txid">${escapeHtml(msg.coinid)}</span>
                     <button class="copy-btn" id="detail-copy-txid-btn" title="Copy transaction ID"></button>
                 </div>
             </div>` : ''}
@@ -1908,30 +1920,30 @@ function renderMessageDetail(msg) {
         return `
             <button class="back-btn" id="back-to-list">← Back</button>
             <div class="message-header">
-                <h3>📤 ${msg.subject || msg.product || 'Order: ' + msg.ref}</h3>
+                <h3>📤 ${escapeHtml(msg.subject || msg.product) || 'Order: ' + escapeHtml(msg.ref)}</h3>
                 <span class="message-direction">📤 Sent</span>
             </div>
 
             <div class="message-info">
                 <div class="info-row">
                     <span class="info-label">Order Ref:</span>
-                    <span class="info-value">${msg.ref}</span>
+                    <span class="info-value">${escapeHtml(msg.ref)}</span>
                 </div>
                 <div class="info-row">
                     <span class="info-label">Product:</span>
-                    <span class="info-value">${msg.product}</span>
+                    <span class="info-value">${escapeHtml(msg.product)}</span>
                 </div>
                 <div class="info-row">
                     <span class="info-label">Size:</span>
-                    <span class="info-value">${msg.size}</span>
+                    <span class="info-value">${escapeHtml(msg.size)}</span>
                 </div>
                 <div class="info-row">
                     <span class="info-label">Amount:</span>
-                    <span class="info-value">$${msg.amount} ${msg.currency}</span>
+                    <span class="info-value">$${escapeHtml(msg.amount)} ${escapeHtml(msg.currency)}</span>
                 </div>
                 <div class="info-row">
                     <span class="info-label">Shipping:</span>
-                    <span class="info-value">${getShippingLabel(msg.shipping)}</span>
+                    <span class="info-value">${escapeHtml(getShippingLabel(msg.shipping))}</span>
                 </div>
                 <div class="info-row">
                     <span class="info-label">Time:</span>
@@ -1939,14 +1951,14 @@ function renderMessageDetail(msg) {
                 </div>
                 <div class="info-row">
                     <span class="info-label">Delivery To:</span>
-                    <span class="info-value">${msg.delivery || 'N/A'}</span>
+                    <span class="info-value">${escapeHtml(msg.delivery) || 'N/A'}</span>
                 </div>
             </div>
 
             <div class="message-tx">
                 <span class="tx-label">Payment TX ID:</span>
                 <div class="tx-copy-row">
-                    <span class="tx-id" id="detail-txid">${msg.coinid || 'Awaiting payment confirmation…'}</span>
+                    <span class="tx-id" id="detail-txid">${escapeHtml(msg.coinid) || 'Awaiting payment confirmation…'}</span>
                     ${msg.coinid ? `<button class="copy-btn" id="detail-copy-txid-btn" title="Copy transaction ID"></button>` : ''}
                 </div>
             </div>
@@ -1957,14 +1969,14 @@ function renderMessageDetail(msg) {
     return `
         <button class="back-btn" id="back-to-list">← Back</button>
         <div class="message-header">
-            <h3>${msg.subject || msg.product || 'Message: ' + msg.ref}</h3>
+            <h3>${escapeHtml(msg.subject || msg.product) || 'Message: ' + escapeHtml(msg.ref)}</h3>
             <span class="message-direction">${!msg.read ? '📨 Unread' : '📧 Read'}</span>
         </div>
-        
+
         <div class="message-info">
             <div class="info-row">
                 <span class="info-label">Ref:</span>
-                <span class="info-value">${msg.ref}</span>
+                <span class="info-value">${escapeHtml(msg.ref)}</span>
             </div>
             <div class="info-row">
                 <span class="info-label">Time:</span>
