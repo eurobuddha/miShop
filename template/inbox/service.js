@@ -54,10 +54,10 @@ function initDatabase(callback) {
         function(response) {
             if (response && response.status) {
                 dbReady = true;
-                console.log('SVC inbox: messages table ready');
+                MDS.log('SVC inbox: messages table ready');
                 callback(true);
             } else {
-                console.log('SVC inbox: DB init failed:', JSON.stringify(response));
+                MDS.log('SVC inbox: DB init failed: ' + JSON.stringify(response));
                 callback(false);
             }
         }
@@ -94,7 +94,7 @@ function saveMessageToDb(message) {
         escapeSQL(message.buyerPublicKey || '') + ', ' + escapeSQL(message.buyerAddress || '') + ')',
         function(response) {
             if (response && response.status) {
-                console.log('SVC inbox: saved msg to DB:', message.ref || message.randomid);
+                MDS.log('SVC inbox: saved msg to DB: ' + (message.ref || message.randomid));
             }
         }
     );
@@ -133,7 +133,7 @@ function tryDecryptMessage(coinid, stateData, callback) {
             
             callback(decrypted);
         } catch (e) {
-            console.log('SVC inbox: decrypt parse error:', e.message);
+            MDS.log('SVC inbox: decrypt parse error: ' + e.message);
             callback(null);
         }
     });
@@ -145,11 +145,11 @@ function processDecryptedMessage(coinid, decrypted) {
     
     isMessageStored(randomid, function(stored) {
         if (stored) {
-            console.log('SVC inbox: message already stored, skipping:', randomid);
+            MDS.log('SVC inbox: message already stored, skipping: ' + randomid);
             return;
         }
 
-        console.log('SVC inbox: decrypted message:', JSON.stringify({ type: decrypted.type, ref: decrypted.ref }));
+        MDS.log('SVC inbox: decrypted message: ' + JSON.stringify({ type: decrypted.type, ref: decrypted.ref }));
 
         // Handle different message types
         if (decrypted.type === 'ORDER') {
@@ -206,7 +206,7 @@ function scanForNewMessages() {
         }
         if (!Array.isArray(coins)) return;
 
-        console.log('SVC inbox: found', coins.length, 'coins at MINIMERCH_ADDRESS');
+        MDS.log('SVC inbox: found ' + coins.length + ' coins at MINIMERCH_ADDRESS');
 
         coins.forEach(function(coin) {
             let state99 = getState99Data(coin.state);
@@ -226,15 +226,15 @@ function scanForNewMessages() {
 
 MDS.init(function(msg) {
     if (msg.event === 'inited') {
-        console.log('SVC inbox: MDS inited (ChainMail protocol)');
+        MDS.log('SVC inbox: MDS inited (ChainMail protocol)');
         initDatabase(function(ok) {
             if (ok) {
                 // Register coinnotify for the fixed MINIMERCH_ADDRESS
                 MDS.cmd('coinnotify action:add address:' + MINIMERCH_ADDRESS, function(resp) {
-                    console.log('SVC inbox: coinnotify registered for MINIMERCH_ADDRESS:', JSON.stringify(resp));
+                    MDS.log('SVC inbox: coinnotify registered: ' + JSON.stringify(resp));
                 });
             }
-            console.log('SVC inbox: service ready');
+            MDS.log('SVC inbox: service ready');
         });
     }
 
